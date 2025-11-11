@@ -61,6 +61,7 @@ class TaskRead(BaseModel):
 class TimelineTicketTask(BaseModel):
     id: int
     ticket_id: Optional[int] = None
+    ticket_code: Optional[str] = None
     name: str
     priority: Optional[str] = None
     status: Optional[str] = None
@@ -443,6 +444,7 @@ class EpicOut(BaseModel):
 
 class TicketOut(BaseModel):
     id: int
+    ticket_code: Optional[str] = None
     user_id: int
     title: str
     description: Optional[str] = None
@@ -488,6 +490,7 @@ class AdminEpicOut(BaseModel):
 # AdminTicket Schemas
 class AdminTicketCreate(BaseModel):
     ticket_id: int
+    ticket_code: Optional[str] = None
     epic_id: Optional[int] = None
     project_id: Optional[int] = None
     project_title: Optional[str] = None
@@ -506,6 +509,7 @@ class AdminTicketUpdate(BaseModel):
     project_id: Optional[int] = None
     project_title: Optional[str] = None
     user_name: Optional[str] = None
+    ticket_code: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
@@ -518,6 +522,7 @@ class AdminTicketUpdate(BaseModel):
 class AdminTicketOut(BaseModel):
     admin_ticket_id: int
     ticket_id: int
+    ticket_code: Optional[str] = None
     epic_id: Optional[int] = None
     project_id: Optional[int] = None
     project_title: Optional[str] = None

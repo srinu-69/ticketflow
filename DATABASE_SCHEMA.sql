@@ -272,6 +272,7 @@ CREATE TABLE admin_epics (
 CREATE TABLE admin_tickets (
     admin_ticket_id SERIAL PRIMARY KEY,
     ticket_id INTEGER NOT NULL,                  -- Reference to tickets.id
+    ticket_code VARCHAR(20) UNIQUE,
     epic_id INTEGER,                             -- Reference to epic
     project_id INTEGER,                          -- Reference to project
     project_title VARCHAR(200),                  -- Project name for display
@@ -304,6 +305,7 @@ COMMENT ON COLUMN admin_epics.project_title IS 'Project name for easy display wi
 COMMENT ON COLUMN admin_epics.user_name IS 'User email who created/owns the epic';
 COMMENT ON COLUMN admin_tickets.project_title IS 'Project name for easy display without joins';
 COMMENT ON COLUMN admin_tickets.user_name IS 'User email who created/owns the ticket';
+COMMENT ON COLUMN admin_tickets.ticket_code IS 'Formatted ticket identifier (FL####V) synced with tickets.ticket_code';
 
 -- =====================================================
 

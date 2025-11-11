@@ -1063,6 +1063,18 @@ const mockIssues = [
 const defaultStatuses = ['backlog', 'todo', 'analysis', 'inprogress', 'blocked', 'code review', 'qa', 'milestone', 'done'];
 const mockEpics = [{ id: 'p1', name: 'Frontend' }, { id: 'p2', name: 'Middleware' }];
 
+const formatTicketId = (rawId) => {
+  if (rawId === undefined || rawId === null) {
+    return '';
+  }
+  const digits = rawId.toString().match(/\d+/);
+  if (!digits) {
+    return rawId.toString();
+  }
+  const padded = digits[0].padStart(4, '0');
+  return `FL${padded}V`;
+};
+
 const simulateApiDelay = () => new Promise(resolve => setTimeout(resolve, 200));
 const listIssues = async (projectId) => {
   try {
@@ -1085,6 +1097,7 @@ const listIssues = async (projectId) => {
       console.log('Admin: Fetched admin tickets:', adminTickets.length, adminTickets);
       
       const mappedTickets = adminTickets.map(ticket => {
+        const ticketCode = ticket.ticket_code || ticket.ticket_id;
         // Parse epic information - prioritize epic_id from database field
         let epicId = ticket.epic_id;
         let epicName = '';
@@ -1124,6 +1137,7 @@ const listIssues = async (projectId) => {
         
         const mappedTicket = {
           id: `i${ticket.ticket_id}`,
+          ticketCode,
           epic: epicId ? `p${epicId}` : null,
           epicName: epicName || 'Unknown Epic',
           status: frontendStatus,
@@ -1393,6 +1407,7 @@ const createIssueAPI = async (issue, projectId, userName) => {
     
     return {
       id: `i${createdTicket.id}`,
+      ticketCode: createdTicket.ticket_code || createdTicket.id,
       ...issue,
       ticketId: createdTicket.id
     };
@@ -2098,7 +2113,7 @@ export default function KanbanBoard() {
                           <div className="card-item" key={issue.id} draggable onDragStart={e => onDragStart(e, issue.id)} onClick={() => handleOpenModal(issue)}>
                             <div className="card-top">
                               <span className={`card-tag card-tag-${issue.type.toLowerCase()}`}>{issue.type}</span>
-                              <span className="card-id">{issue.id}</span>
+                              <span className="card-id">{formatTicketId(issue.ticketCode || issue.id)}</span>
                             </div>
                             <div className="card-title">{issue.title}</div>
                             <div className="card-meta">

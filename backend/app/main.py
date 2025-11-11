@@ -413,6 +413,7 @@ async def create_ticket(ticket_in: schemas.TicketCreate, epic_id: Optional[int] 
             
             admin_ticket_data = schemas.AdminTicketCreate(
                 ticket_id=created_ticket.id,
+                ticket_code=created_ticket.ticket_code,
                 epic_id=epic_id,
                 project_id=project_id,
                 project_title=project_title,

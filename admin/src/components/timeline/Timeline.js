@@ -23,6 +23,7 @@ const PRIORITY_WINDOWS = {
 
 const createFallbackTask = ({
   id,
+  ticketCode,
   project,
   name,
   priority,
@@ -45,6 +46,7 @@ const createFallbackTask = ({
 
   return {
     id,
+    ticketCode: ticketCode || null,
     project,
     name,
     priority,
@@ -63,6 +65,7 @@ const createFallbackTask = ({
 const INITIAL_TASKS = [
   createFallbackTask({
     id: "t-1",
+    ticketCode: "FL0001V",
     project: "NOVYA",
     name: "API Refactor",
     priority: "High",
@@ -72,6 +75,7 @@ const INITIAL_TASKS = [
   }),
   createFallbackTask({
     id: "t-2",
+    ticketCode: "FL0002V",
     project: "JIO",
     name: "UI Polish",
     priority: "Low",
@@ -81,6 +85,7 @@ const INITIAL_TASKS = [
   }),
   createFallbackTask({
     id: "t-3",
+    ticketCode: "FL0003V",
     project: "FlowTrack",
     name: "Timeline Motion",
     priority: "Medium",
@@ -90,6 +95,7 @@ const INITIAL_TASKS = [
   }),
   createFallbackTask({
     id: "t-4",
+    ticketCode: "FL0004V",
     project: "UX Team",
     name: "Deploy Production",
     priority: "Critical",
@@ -313,10 +319,15 @@ const mapApiTaskToAdminRow = (task, projectLookup = {}) => {
     task.project ||
     "—";
   const projectId = task.project_id ?? projectLookup?.[task.ticket_id]?.projectId ?? null;
+  const ticketCode =
+    task.ticket_code ||
+    projectLookup?.[task.ticket_id]?.ticketCode ||
+    (task.ticket_id != null ? `FL${String(task.ticket_id).padStart(4, "0")}V` : null);
 
   return {
     id: `timeline-${task.id ?? task.ticket_id}`,
     ticketId: task.ticket_id ?? task.id,
+    ticketCode,
     projectId,
     project: projectTitle,
     name: task.name || `Ticket ${task.ticket_id ?? task.id}`,
@@ -481,6 +492,7 @@ const Timeline = () => {
           acc[ticket.ticket_id] = {
             projectTitle: ticket.project_title || "—",
             projectId: ticket.project_id,
+            ticketCode: ticket.ticket_code || null,
           };
           return acc;
         }, {});
@@ -577,6 +589,7 @@ const Timeline = () => {
         const needle = searchTerm.trim().toLowerCase();
         return (
           task.name.toLowerCase().includes(needle) ||
+          (task.ticketCode && task.ticketCode.toLowerCase().includes(needle)) ||
           task.project.toLowerCase().includes(needle) ||
           task.status.toLowerCase().includes(needle)
         );
@@ -861,7 +874,7 @@ const Timeline = () => {
             <thead>
               <tr>
                 <th style={{ ...tableHeadCellStyle, borderTopLeftRadius: "24px" }}>Project</th>
-                <th style={tableHeadCellStyle}>Task</th>
+                <th style={tableHeadCellStyle}>Ticket</th>
                 <th style={tableHeadCellStyle}>Schedule</th>
                 <th style={tableHeadCellStyle}>Status</th>
                 <th style={{ ...tableHeadCellStyle, borderTopRightRadius: "24px" }}>Timeline</th>
@@ -897,7 +910,14 @@ const Timeline = () => {
                       <div style={{ fontSize: "13px", color: "#64748b", marginTop: "4px" }}>{task.duration}</div>
                     </td>
                     <td style={cellStyle}>
-                      <div style={{ fontWeight: 600 }}>{task.name}</div>
+                      <div style={{ fontWeight: 600 }}>
+                        {task.ticketCode || `Ticket ${task.ticketId}`}
+                      </div>
+                      {task.name && (
+                        <div style={{ fontSize: "13px", color: "#475569", marginTop: "4px" }}>
+                          {task.name}
+                        </div>
+                      )}
                       <div style={{ fontSize: "13px", color: "#64748b", marginTop: "4px" }}>
                         SLA window: {task.duration}
                       </div>

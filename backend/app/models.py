@@ -242,6 +242,7 @@ class Ticket(Base):
     __tablename__ = "tickets"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    ticket_code = Column(String(20), unique=True, nullable=True)
     user_id = Column(Integer, nullable=False)  # Will reference users table
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
@@ -271,6 +272,7 @@ class AdminTicket(Base):
 
     admin_ticket_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     ticket_id = Column(Integer, nullable=False)  # Reference to original ticket
+    ticket_code = Column(String(20), unique=True, nullable=True)
     epic_id = Column(Integer, nullable=True)  # Reference to epic
     project_id = Column(Integer, nullable=True)  # Reference to project
     project_title = Column(String(200), nullable=True)  # Project name for easy lookup

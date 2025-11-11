@@ -54,6 +54,18 @@ const mockEpics = [{ id: 'p1', name: 'Frontend' }, { id: 'p2', name: 'Middleware
 
 const simulateApiDelay = () => new Promise(resolve => setTimeout(resolve, 200));
 
+const formatTicketId = (rawId) => {
+  if (rawId === undefined || rawId === null) {
+    return '';
+  }
+  const digits = rawId.toString().match(/\d+/);
+  if (!digits) {
+    return rawId.toString();
+  }
+  const padded = digits[0].padStart(4, '0');
+  return `FL${padded}V`;
+};
+
 // Real API functions that connect to backend
 const listIssues = async (projectId) => {
   try {
@@ -90,6 +102,7 @@ const listIssues = async (projectId) => {
       
       // Convert tickets to the format expected by the UI
       return filteredTickets.map(ticket => {
+        const ticketCode = ticket.ticket_code || ticket.id;
         // Map backend statuses to frontend statuses
         let mappedStatus = ticket.status.toLowerCase().replace(/\s+/g, '');
         if (mappedStatus === 'open') {
@@ -136,6 +149,7 @@ const listIssues = async (projectId) => {
         
         return {
           id: ticket.id.toString(),
+          ticketCode: ticketCode,
           epic: epic,
           epicName: epicName,
           status: mappedStatus,
@@ -1279,7 +1293,7 @@ export default function KanbanBoard() {
                           <div className="card-item" key={issue.id} draggable onDragStart={e => onDragStart(e, issue)} onClick={() => handleIssueClick(issue)}>
                             <div className="card-top">
                               <span className={`card-tag card-tag-${issue.type.toLowerCase()}`}>{issue.type}</span>
-                              <span className="card-id">#{issue.id}</span>
+                              <span className="card-id">{formatTicketId(issue.ticketCode || issue.id)}</span>
                             </div>
                             <div className="card-title">{issue.title}</div>
                             <div className="card-meta">

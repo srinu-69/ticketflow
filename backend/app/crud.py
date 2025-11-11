@@ -254,6 +254,30 @@ TIMELINE_PRIORITY_STYLES = {
 
 TIMELINE_DEFAULT_SEGMENTS = ["#22c55e", "#ef4444"]
 
+def _generate_ticket_code(ticket_id: int) -> str:
+    """Generate external-facing ticket code using FL####V pattern."""
+    padded = f"{int(ticket_id):04d}"
+    return f"FL{padded}V"
+
+
+def _apply_ticket_code(ticket: Optional[models.Ticket]) -> bool:
+    """Ensure a Ticket row has a ticket_code assigned. Returns True if updated."""
+    if ticket and ticket.id and not ticket.ticket_code:
+        ticket.ticket_code = _generate_ticket_code(ticket.id)
+        return True
+    return False
+
+
+def _apply_admin_ticket_code(admin_ticket: Optional[models.AdminTicket], fallback_ticket_id: Optional[int] = None) -> bool:
+    """Ensure an AdminTicket row has a ticket_code assigned. Returns True if updated."""
+    if not admin_ticket:
+        return False
+    base_id = admin_ticket.ticket_id or fallback_ticket_id
+    if base_id and not admin_ticket.ticket_code:
+        admin_ticket.ticket_code = _generate_ticket_code(base_id)
+        return True
+    return False
+
 
 async def _get_ticket_timeline_project(session: AsyncSession) -> Optional[models.TimelineProject]:
     q = select(models.TimelineProject).where(models.TimelineProject.name == TICKET_TIMELINE_PROJECT_NAME)
@@ -306,6 +330,7 @@ def _build_timeline_description(
         "project_id": project_id,
         "project_title": project_title,
         "owner_email": owner_email,
+        "ticket_code": ticket.ticket_code,
     }
     return json.dumps(payload)
 
@@ -415,6 +440,7 @@ async def sync_timeline_for_ticket(session: AsyncSession, ticket: models.Ticket,
                 "project_id": project_id,
                 "project_title": project_title,
                 "owner_email": owner_email,
+                "ticket_code": ticket.ticket_code,
             }
 
             if merged_payload.get("is_paused"):
@@ -485,6 +511,7 @@ async def sync_timeline_for_ticket(session: AsyncSession, ticket: models.Ticket,
             existing_payload["project_id"] = project_id
             existing_payload["project_title"] = project_title
             existing_payload["owner_email"] = owner_email
+            existing_payload["ticket_code"] = ticket.ticket_code
 
             if task.name != ticket.title:
                 task.name = ticket.title
@@ -513,6 +540,7 @@ async def sync_timeline_for_ticket(session: AsyncSession, ticket: models.Ticket,
             existing_payload["owner_email"] = owner_email
             existing_payload["completed_at"] = None
             existing_payload["segments"] = TIMELINE_DEFAULT_SEGMENTS
+            existing_payload["ticket_code"] = ticket.ticket_code
             task.description = json.dumps(existing_payload)
             await session.commit()
             await session.refresh(task)
@@ -565,9 +593,18 @@ async def list_ticket_timeline_tasks(session: AsyncSession) -> dict:
         if start_dt and total_minutes and total_minutes > 0:
             end_dt = start_dt + timedelta(minutes=total_minutes)
 
+        ticket_id = metadata.get("ticket_id")
+        ticket_code = metadata.get("ticket_code")
+        if ticket_code is None and ticket_id is not None:
+            try:
+                ticket_code = _generate_ticket_code(int(ticket_id))
+            except (TypeError, ValueError):
+                ticket_code = None
+
         tasks.append({
             "id": task.id,
-            "ticket_id": metadata.get("ticket_id"),
+            "ticket_id": ticket_id,
+            "ticket_code": ticket_code,
             "name": task.name,
             "priority": priority_value,
             "status": metadata.get("status"),
@@ -950,6 +987,10 @@ async def create_ticket(session: AsyncSession, ticket_in: schemas.TicketCreate) 
     session.add(ticket)
     await session.commit()
     await session.refresh(ticket)
+
+    if _apply_ticket_code(ticket):
+        await session.commit()
+        await session.refresh(ticket)
     
     # Update counters if assignee is set
     if ticket.assignee:
@@ -968,7 +1009,11 @@ async def get_ticket(session: AsyncSession, ticket_id: int) -> Optional[models.T
     """Get ticket by ID"""
     q = select(models.Ticket).where(models.Ticket.id == ticket_id)
     res = await session.execute(q)
-    return res.scalars().first()
+    ticket = res.scalars().first()
+    if ticket and _apply_ticket_code(ticket):
+        await session.commit()
+        await session.refresh(ticket)
+    return ticket
 
 async def list_tickets(session: AsyncSession, user_id: Optional[int] = None, status: Optional[str] = None) -> List[models.Ticket]:
     """List tickets with optional filters"""
@@ -979,7 +1024,14 @@ async def list_tickets(session: AsyncSession, user_id: Optional[int] = None, sta
         q = q.where(models.Ticket.status == status)
     q = q.order_by(models.Ticket.created_at.desc())
     res = await session.execute(q)
-    return res.scalars().all()
+    tickets = res.scalars().all()
+    updated = False
+    for ticket in tickets:
+        if _apply_ticket_code(ticket):
+            updated = True
+    if updated:
+        await session.commit()
+    return tickets
 
 async def update_ticket(session: AsyncSession, ticket_id: int, ticket_in: schemas.TicketUpdate) -> Optional[models.Ticket]:
     """Update a ticket"""
@@ -1010,6 +1062,10 @@ async def update_ticket(session: AsyncSession, ticket_id: int, ticket_in: schema
     
     await session.commit()
     await session.refresh(ticket)
+
+    if _apply_ticket_code(ticket):
+        await session.commit()
+        await session.refresh(ticket)
     
     # Handle counter updates
     new_assignee = ticket.assignee if ticket_in.assignee is not None else old_assignee
@@ -1531,6 +1587,7 @@ async def create_admin_ticket(session: AsyncSession, admin_ticket_in: schemas.Ad
     """Create a new admin ticket"""
     admin_ticket = models.AdminTicket(
         ticket_id=admin_ticket_in.ticket_id,
+        ticket_code=admin_ticket_in.ticket_code,
         epic_id=admin_ticket_in.epic_id,
         project_id=admin_ticket_in.project_id,
         project_title=admin_ticket_in.project_title,
@@ -1547,6 +1604,9 @@ async def create_admin_ticket(session: AsyncSession, admin_ticket_in: schemas.Ad
     session.add(admin_ticket)
     await session.commit()
     await session.refresh(admin_ticket)
+    if _apply_admin_ticket_code(admin_ticket, fallback_ticket_id=admin_ticket.ticket_id):
+        await session.commit()
+        await session.refresh(admin_ticket)
     return admin_ticket
 
 async def get_admin_ticket(session: AsyncSession, admin_ticket_id: int) -> Optional[models.AdminTicket]:
@@ -1554,14 +1614,22 @@ async def get_admin_ticket(session: AsyncSession, admin_ticket_id: int) -> Optio
     result = await session.execute(
         select(models.AdminTicket).where(models.AdminTicket.admin_ticket_id == admin_ticket_id)
     )
-    return result.scalar_one_or_none()
+    admin_ticket = result.scalar_one_or_none()
+    if admin_ticket and _apply_admin_ticket_code(admin_ticket, fallback_ticket_id=admin_ticket.ticket_id):
+        await session.commit()
+        await session.refresh(admin_ticket)
+    return admin_ticket
 
 async def get_admin_ticket_by_ticket_id(session: AsyncSession, ticket_id: int) -> Optional[models.AdminTicket]:
     """Get an admin ticket by original ticket_id"""
     result = await session.execute(
         select(models.AdminTicket).where(models.AdminTicket.ticket_id == ticket_id)
     )
-    return result.scalar_one_or_none()
+    admin_ticket = result.scalar_one_or_none()
+    if admin_ticket and _apply_admin_ticket_code(admin_ticket, fallback_ticket_id=ticket_id):
+        await session.commit()
+        await session.refresh(admin_ticket)
+    return admin_ticket
 
 async def list_admin_tickets(session: AsyncSession, project_id: Optional[int] = None, epic_id: Optional[int] = None) -> List[models.AdminTicket]:
     """List all admin tickets, optionally filtered by project or epic"""
@@ -1571,7 +1639,14 @@ async def list_admin_tickets(session: AsyncSession, project_id: Optional[int] = 
     if epic_id is not None:
         query = query.where(models.AdminTicket.epic_id == epic_id)
     result = await session.execute(query)
-    return list(result.scalars().all())
+    admin_tickets = list(result.scalars().all())
+    updated = False
+    for admin_ticket in admin_tickets:
+        if _apply_admin_ticket_code(admin_ticket):
+            updated = True
+    if updated:
+        await session.commit()
+    return admin_tickets
 
 async def update_admin_ticket(session: AsyncSession, admin_ticket_id: int, admin_ticket_in: schemas.AdminTicketUpdate) -> Optional[models.AdminTicket]:
     """Update an admin ticket"""
@@ -1587,6 +1662,8 @@ async def update_admin_ticket(session: AsyncSession, admin_ticket_id: int, admin
         admin_ticket.project_title = admin_ticket_in.project_title
     if admin_ticket_in.user_name is not None:
         admin_ticket.user_name = admin_ticket_in.user_name
+    if admin_ticket_in.ticket_code is not None:
+        admin_ticket.ticket_code = admin_ticket_in.ticket_code
     if admin_ticket_in.title is not None:
         admin_ticket.title = admin_ticket_in.title
     if admin_ticket_in.description is not None:
@@ -1606,6 +1683,9 @@ async def update_admin_ticket(session: AsyncSession, admin_ticket_id: int, admin
     
     await session.commit()
     await session.refresh(admin_ticket)
+    if _apply_admin_ticket_code(admin_ticket, fallback_ticket_id=admin_ticket.ticket_id):
+        await session.commit()
+        await session.refresh(admin_ticket)
     return admin_ticket
 
 async def delete_admin_ticket(session: AsyncSession, admin_ticket_id: int) -> bool:
