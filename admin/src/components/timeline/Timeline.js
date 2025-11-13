@@ -131,8 +131,7 @@ const PRIORITY_THEMES = {
 const STATUS_THEMES = {
   "In Progress": { bg: "rgba(59,130,246,0.18)", color: "#1d4ed8" },
   Completed: { bg: "rgba(34,197,94,0.18)", color: "#166534" },
-  Delayed: { bg: "rgba(248,113,113,0.25)", color: "#b91c1c" },
-  Planned: { bg: "rgba(226,232,240,0.4)", color: "#475569" },
+  Blocked: { bg: "rgba(248,113,113,0.25)", color: "#b91c1c" },
 };
 
 const LEGEND_ITEMS = [
@@ -142,7 +141,7 @@ const LEGEND_ITEMS = [
 ];
 
 const PRIORITY_FILTER_OPTIONS = ["All priorities", "Low", "Medium", "High", "Critical"];
-const STATUS_FILTER_OPTIONS = ["All statuses", "In Progress", "Completed", "Delayed", "Planned"];
+const STATUS_FILTER_OPTIONS = ["All statuses", "In Progress", "Completed", "Blocked"];
 
 const containerStyle = {
   minHeight: "100vh",
@@ -282,12 +281,12 @@ const normalizeStatus = (status) => {
   if (raw === "done" || raw === "completed" || compact === "complete" || compact === "resolved" || compact === "closed") {
     return "Completed";
   }
-  if (raw === "blocked" || compact === "blocked") return "Delayed";
+  if (raw === "blocked" || raw === "delayed" || compact === "blocked") return "Blocked";
   if (compact === "inprogress" || compact === "analysis" || compact === "codereview" || compact === "qa" || compact === "milestone") {
     return "In Progress";
   }
   if (raw === "in progress" || compact === "inprogress") return "In Progress";
-  if (raw === "todo" || raw === "planned") return "Planned";
+  if (raw === "todo" || raw === "planned") return "In Progress";
   return status
     ? status
         .toString()
@@ -295,6 +294,31 @@ const normalizeStatus = (status) => {
         .toLowerCase()
         .replace(/\b\w/g, (c) => c.toUpperCase())
     : "In Progress";
+};
+
+const isBlockedStatus = (status) => status === "Blocked";
+
+const getCompletionDurationMinutes = (task) => {
+  if (!task) return null;
+
+  if (Number.isFinite(task.accumulatedMinutes) && task.accumulatedMinutes > 0) {
+    return Math.max(0, Number(task.accumulatedMinutes));
+  }
+
+  const completedAt =
+    parseDateTime(task.completedAt) ||
+    parseDateTime(task.completed_at) ||
+    parseDateTime(task.end);
+  const startedAt =
+    parseDateTime(task.lastStartedAt) ||
+    parseDateTime(task.start) ||
+    parseDateTime(task.created_at);
+
+  if (completedAt && startedAt) {
+    return Math.max(0, (completedAt.getTime() - startedAt.getTime()) / 60000);
+  }
+
+  return null;
 };
 
 const mapApiTaskToAdminRow = (task, projectLookup = {}) => {
@@ -340,8 +364,9 @@ const mapApiTaskToAdminRow = (task, projectLookup = {}) => {
     accumulatedMinutes: Number.isFinite(accumulatedMinutes) ? accumulatedMinutes : 0,
     lastStartedAt,
     isPaused: Boolean(task.is_paused),
-    completedAt: task.completed_at,
+    completedAt: task.completed_at || task.completedAt || null,
     blockedAt: task.blocked_at,
+    completed_at: task.completed_at,
   };
 };
 
@@ -403,6 +428,15 @@ const convertStatsPayload = (payload) => {
 const computeProgressMeta = (task, now) => {
   const window = PRIORITY_WINDOWS[task.priority] || PRIORITY_WINDOWS.Medium;
   const totalMinutes = task.totalMinutes || window.totalMinutes;
+  const status = task.status;
+  const isCompleted = status === "Completed";
+  const isBlocked = isBlockedStatus(status);
+  const completionMinutesOverride = getCompletionDurationMinutes(task);
+  const completionLabelOverride =
+    completionMinutesOverride != null
+      ? formatDurationMinutes(completionMinutesOverride)
+      : null;
+  const isEffectivelyPaused = isCompleted || isBlocked || task.isPaused;
 
   if (totalMinutes && Number.isFinite(totalMinutes)) {
     const baseAccumulated = Math.max(0, Number(task.accumulatedMinutes ?? 0));
@@ -410,26 +444,50 @@ const computeProgressMeta = (task, now) => {
       parseDateTime(task.lastStartedAt) || parseDateTime(task.start) || new Date();
 
     let elapsedMinutes = baseAccumulated;
-    if (!task.isPaused && referenceStart) {
+    if (!isEffectivelyPaused && referenceStart) {
       elapsedMinutes += Math.max(0, (now - referenceStart.getTime()) / 60000);
     }
 
     const percentRaw = totalMinutes > 0 ? (elapsedMinutes / totalMinutes) * 100 : 0;
     const percent = Math.min(Math.max(percentRaw, 0), 100);
-    const overtimePercent = percentRaw > 100 ? percentRaw - 100 : 0;
+    const overtimePercent =
+      isCompleted || isBlocked ? 0 : percentRaw > 100 ? percentRaw - 100 : 0;
     const remainingMinutes = Math.max(totalMinutes - elapsedMinutes, 0);
     const overdueMinutes = Math.max(elapsedMinutes - totalMinutes, 0);
-    const overdue = overdueMinutes > 0 && task.status !== "Completed";
+    const overdue = !isCompleted && !isBlocked && overdueMinutes > 0;
 
-    let timeLabel = "—";
-    if (task.status === "Completed") {
-      timeLabel = "Completed";
-    } else if (overdue) {
-      timeLabel = `Overdue by ${formatDurationMinutes(overdueMinutes)}`;
-    } else {
-      timeLabel = `${formatDurationMinutes(remainingMinutes)} left`;
+    if (isCompleted) {
+      const completionLabel =
+        completionLabelOverride || formatDurationMinutes(elapsedMinutes);
+      return {
+        percent,
+        overtimePercent: 0,
+        overdue: false,
+        remainingMinutes: 0,
+        overdueMinutes: 0,
+        elapsedMinutes,
+        timeLabel: completionLabel ? `Completed in ${completionLabel}` : "Completed",
+        elapsedLabel:
+          completionLabel || `${Math.round(Math.min(percentRaw, 100))}% elapsed`,
+      };
     }
 
+    if (isBlocked) {
+      return {
+        percent,
+        overtimePercent: 0,
+        overdue: false,
+        remainingMinutes,
+        overdueMinutes: 0,
+        elapsedMinutes,
+        timeLabel: "Paused (Blocked)",
+        elapsedLabel: `${Math.round(Math.min(percentRaw, 100))}% elapsed`,
+      };
+    }
+
+    const timeLabel = overdue
+      ? `Overdue by ${formatDurationMinutes(overdueMinutes)}`
+      : `${formatDurationMinutes(remainingMinutes)} left`;
     const elapsedLabel = `${Math.round(Math.min(percentRaw, 100))}% elapsed`;
 
     return {
@@ -444,11 +502,23 @@ const computeProgressMeta = (task, now) => {
     };
   }
 
-  const percent = Math.min(Math.max(task.progress ?? 0, 0), 100);
-  const overtimePercent = percent > 100 ? percent - 100 : 0;
+  const basePercent = Math.min(Math.max(task.progress ?? 0, 0), 100);
+  const percent = isCompleted ? 100 : basePercent;
+  const overtimePercent =
+    !isCompleted && !isBlocked && basePercent > 100 ? basePercent - 100 : 0;
   const overdue =
-    task.status !== "Completed" &&
+    !isCompleted &&
+    !isBlocked &&
     (overtimePercent > 0 || (task.end && parseDateTime(task.end)?.getTime() < now));
+
+  const completionMinutes =
+    isCompleted && completionMinutesOverride != null
+      ? completionMinutesOverride
+      : null;
+  const completionLabel =
+    completionMinutes != null
+      ? formatDurationMinutes(completionMinutes)
+      : completionLabelOverride;
 
   return {
     percent: Math.min(percent, 100),
@@ -457,8 +527,18 @@ const computeProgressMeta = (task, now) => {
     remainingMinutes: null,
     overdueMinutes: null,
     elapsedMinutes: null,
-    timeLabel: overdue ? "Overdue" : `${Math.max(0, 100 - percent)}% remaining`,
-    elapsedLabel: `${Math.round(Math.min(percent, 100))}% elapsed`,
+    timeLabel: isCompleted
+      ? completionLabel
+        ? `Completed in ${completionLabel}`
+        : "Completed"
+      : isBlocked
+      ? "Paused (Blocked)"
+      : overdue
+      ? "Overdue"
+      : `${Math.max(0, 100 - percent)}% remaining`,
+    elapsedLabel:
+      completionLabel ||
+      `${Math.round(Math.min(isCompleted ? 100 : percent, 100))}% elapsed`,
   };
 };
 

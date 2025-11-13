@@ -49,10 +49,86 @@ const mockIssues = [
   }
 ];
 
-const defaultStatuses = ['backlog', 'todo', 'analysis', 'inprogress', 'blocked', 'code review', 'qa', 'milestone', 'done'];
+const ALLOWED_STATUSES = ['backlog', 'todo', 'inprogress', 'blocked', 'code_review', 'done'];
+const defaultStatuses = [...ALLOWED_STATUSES];
 const mockEpics = [{ id: 'p1', name: 'Frontend' }, { id: 'p2', name: 'Middleware' }];
 
 const simulateApiDelay = () => new Promise(resolve => setTimeout(resolve, 200));
+
+const normalizeStatus = (status) => {
+  if (!status) {
+    return 'backlog';
+  }
+
+  const normalized = status
+    .toString()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+
+  switch (normalized) {
+    case 'open':
+      return 'backlog';
+    case 'todo':
+      return 'todo';
+    case 'analysis':
+    case 'codereview':
+      return 'code_review';
+    case 'qa':
+    case 'inprogress':
+    case 'inprogres':
+      return 'inprogress';
+    case 'blocked':
+      return 'blocked';
+    case 'done':
+    case 'complete':
+    case 'completed':
+      return 'done';
+    default:
+      return normalized || 'backlog';
+  }
+};
+
+const mapStatusToBackend = (status) => {
+  const normalized = normalizeStatus(status);
+  switch (normalized) {
+    case 'backlog':
+      return 'Open';
+    case 'todo':
+      return 'Todo';
+    case 'inprogress':
+      return 'In Progress';
+    case 'blocked':
+      return 'Blocked';
+    case 'code_review':
+      return 'Code review';
+    case 'done':
+      return 'Done';
+    default:
+      return typeof status === 'string' && status.length > 0
+        ? status.charAt(0).toUpperCase() + status.slice(1)
+        : status;
+  }
+};
+
+const formatStatusLabel = (status) => {
+  const normalized = normalizeStatus(status);
+  switch (normalized) {
+    case 'todo':
+      return 'TO DO';
+    case 'inprogress':
+      return 'IN PROGRESS';
+    case 'backlog':
+      return 'BACKLOG';
+    case 'blocked':
+      return 'BLOCKED';
+    case 'code_review':
+      return 'CODE REVIEW';
+    case 'done':
+      return 'DONE';
+    default:
+      return status ? status.toUpperCase() : '';
+  }
+};
 
 const formatTicketId = (rawId) => {
   if (rawId === undefined || rawId === null) {
@@ -104,24 +180,7 @@ const listIssues = async (projectId) => {
       return filteredTickets.map(ticket => {
         const ticketCode = ticket.ticket_code || ticket.id;
         // Map backend statuses to frontend statuses
-        let mappedStatus = ticket.status.toLowerCase().replace(/\s+/g, '');
-        if (mappedStatus === 'open') {
-          mappedStatus = 'backlog';
-        } else if (mappedStatus === 'todo') {
-          mappedStatus = 'todo';
-        } else if (mappedStatus === 'analysis') {
-          mappedStatus = 'analysis';
-        } else if (mappedStatus === 'inprogress') {
-          mappedStatus = 'inprogress';
-        } else if (mappedStatus === 'blocked') {
-          mappedStatus = 'blocked';
-        } else if (mappedStatus === 'codereview') {
-          mappedStatus = 'code review';
-        } else if (mappedStatus === 'qa') {
-          mappedStatus = 'qa';
-        } else if (mappedStatus === 'done') {
-          mappedStatus = 'done';
-        }
+        const mappedStatus = normalizeStatus(ticket.status);
         
         // Parse epic information from description
         let epic = 'p1'; // Default to Frontend
@@ -275,27 +334,7 @@ const deleteEpicAPI = async (epicId) => {
 const moveIssue = async (issueId, status) => {
   try {
     // Map frontend statuses to backend statuses
-    let backendStatus = status;
-    if (status === 'backlog') {
-      backendStatus = 'Open';
-    } else if (status === 'todo') {
-      backendStatus = 'Todo';
-    } else if (status === 'analysis') {
-      backendStatus = 'Analysis';
-    } else if (status === 'inprogress') {
-      backendStatus = 'In Progress';
-    } else if (status === 'blocked') {
-      backendStatus = 'Blocked';
-    } else if (status === 'code review') {
-      backendStatus = 'Code review';
-    } else if (status === 'qa') {
-      backendStatus = 'QA';
-    } else if (status === 'done') {
-      backendStatus = 'Done';
-    } else {
-      // Default: capitalize first letter
-      backendStatus = status.charAt(0).toUpperCase() + status.slice(1);
-    }
+    const backendStatus = mapStatusToBackend(status);
     
     const response = await fetch(`http://localhost:8000/tickets/${issueId}`, {
       method: 'PUT',
@@ -418,28 +457,7 @@ const deleteIssueAPI = async (issueId) => {
 
 const updateIssueAPI = async (updatedIssue) => { 
   try {
-    // Map frontend statuses to backend statuses
-    let backendStatus = updatedIssue.status;
-    if (updatedIssue.status === 'backlog') {
-      backendStatus = 'Open';
-    } else if (updatedIssue.status === 'todo') {
-      backendStatus = 'Todo';
-    } else if (updatedIssue.status === 'analysis') {
-      backendStatus = 'Analysis';
-    } else if (updatedIssue.status === 'inprogress') {
-      backendStatus = 'In Progress';
-    } else if (updatedIssue.status === 'blocked') {
-      backendStatus = 'Blocked';
-    } else if (updatedIssue.status === 'code review') {
-      backendStatus = 'Code review';
-    } else if (updatedIssue.status === 'qa') {
-      backendStatus = 'QA';
-    } else if (updatedIssue.status === 'done') {
-      backendStatus = 'Done';
-    } else {
-      // Default: capitalize first letter
-      backendStatus = updatedIssue.status.charAt(0).toUpperCase() + updatedIssue.status.slice(1);
-    }
+    const backendStatus = mapStatusToBackend(updatedIssue.status);
     
     // Preserve epic information in description
     let description = updatedIssue.description || '';
@@ -1264,7 +1282,7 @@ export default function KanbanBoard() {
                   return (
                     <div className="kanban-column" key={status} onDragOver={onDragOver} onDrop={e => onDrop(e, status, lane.id)}>
                       <div className="col-header">
-                        <span className="col-title">{status.toUpperCase()}</span>
+                        <span className="col-title">{formatStatusLabel(status)}</span>
                         <span className="col-icons">
                           <button className="col-icon" title="Add Column" onClick={e => openAddColumnModal(e, lane.id, idx)}>＋</button>
                           <button className="col-icon" title="Edit/Delete Column" onClick={e => openEditColumnModal(e, lane.id, idx, status)}>⋮</button>
@@ -1396,11 +1414,9 @@ export default function KanbanBoard() {
                 >
                   <option value="backlog">Backlog</option>
                   <option value="todo">To Do</option>
-                  <option value="analysis">Analysis</option>
                   <option value="inprogress">In Progress</option>
                   <option value="blocked">Blocked</option>
-                  <option value="code review">Code Review</option>
-                  <option value="qa">QA</option>
+                  <option value="code_review">Code Review</option>
                   <option value="done">Done</option>
                 </select>
               </div>

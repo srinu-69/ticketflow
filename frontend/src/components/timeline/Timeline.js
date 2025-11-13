@@ -5,6 +5,7 @@ import {
   FiFilter,
   FiRefreshCcw,
   FiSearch,
+  FiPlusCircle,
 } from "react-icons/fi";
 import { useAuth } from "../../context/AuthContext";
 
@@ -14,55 +15,95 @@ const TIMELINE_STATS_URL = `${API_BASE}/timeline/stats`;
 const ADMIN_TICKETS_URL = `${API_BASE}/admin/tickets`;
 const PROJECTS_URL = `${API_BASE}/projects`;
 
+const PRIORITY_WINDOWS = {
+  Low: { totalMinutes: 72 * 60, label: "Up to 72 Hrs" },
+  Medium: { totalMinutes: 24 * 60, label: "Up to 24 Hrs" },
+  High: { totalMinutes: 6 * 60, label: "Up to 6 Hrs" },
+  Critical: { totalMinutes: 60, label: "Up to 1 Hr" },
+};
+
+const createFallbackTask = ({
+  id,
+  ticketCode,
+  project,
+  name,
+  priority,
+  status,
+  start,
+  progress,
+}) => {
+  const window = PRIORITY_WINDOWS[priority] || PRIORITY_WINDOWS.Medium;
+  const startDate = new Date(start);
+  const startIso = Number.isNaN(startDate.getTime())
+    ? new Date().toISOString()
+    : startDate.toISOString();
+  const endIso = Number.isNaN(startDate.getTime())
+    ? null
+    : new Date(startDate.getTime() + window.totalMinutes * 60000).toISOString();
+  const accumulatedMinutes =
+    typeof progress === "number"
+      ? Math.max(0, Math.min(100, progress)) * 0.01 * window.totalMinutes
+      : 0;
+
+  return {
+    id,
+    ticketCode: ticketCode || null,
+    project,
+    name,
+    priority,
+    status,
+    start: startIso,
+    end: endIso,
+    duration: window.label,
+    totalMinutes: window.totalMinutes,
+    accumulatedMinutes,
+    lastStartedAt: startIso,
+    isPaused: status !== "In Progress",
+    progress,
+  };
+};
+
 const INITIAL_TASKS = [
-  {
+  createFallbackTask({
     id: "t-1",
     ticketCode: "FL0001V",
     project: "NOVYA",
     name: "API Refactor",
     priority: "High",
     status: "In Progress",
-    start: "2025-09-22",
-    end: "2025-09-24",
-  duration: "Up to 6 Hrs",
+    start: "2025-09-22T08:00:00",
     progress: 55,
-  },
-  {
+  }),
+  createFallbackTask({
     id: "t-2",
     ticketCode: "FL0002V",
     project: "JIO",
     name: "UI Polish",
     priority: "Low",
     status: "Completed",
-    start: "2025-09-21",
-    end: "2025-09-25",
-  duration: "Up to 72 Hrs",
-    progress: 92,
-  },
-  {
+    start: "2025-09-21T09:00:00",
+    progress: 100,
+  }),
+  createFallbackTask({
     id: "t-3",
     ticketCode: "FL0003V",
     project: "FlowTrack",
     name: "Timeline Motion",
     priority: "Medium",
     status: "In Progress",
-    start: "2025-09-23",
-    end: "2025-09-27",
-  duration: "Up to 24 Hrs",
+    start: "2025-09-23T10:00:00",
     progress: 48,
-  },
-  {
+  }),
+  createFallbackTask({
     id: "t-4",
     ticketCode: "FL0004V",
     project: "UX Team",
     name: "Deploy Production",
     priority: "Critical",
     status: "Delayed",
-    start: "2025-09-24",
-    end: "2025-09-24",
-  duration: "Up to 1 Hr",
-    progress: 18,
-  },
+    start: "2025-09-24T11:00:00",
+    progress: 118,
+  }),
 ];
 
 const PRIORITY_THEMES = {
@@ -91,7 +132,7 @@ const PRIORITY_THEMES = {
 const STATUS_THEMES = {
   "In Progress": { bg: "rgba(59,130,246,0.18)", color: "#1d4ed8" },
   Completed: { bg: "rgba(34,197,94,0.18)", color: "#166534" },
-  Delayed: { bg: "rgba(248,113,113,0.25)", color: "#b91c1c" },
+  Blocked: { bg: "rgba(248,113,113,0.25)", color: "#b91c1c" },
 };
 
 const LEGEND_ITEMS = [
@@ -101,14 +142,7 @@ const LEGEND_ITEMS = [
 ];
 
 const PRIORITY_FILTER_OPTIONS = ["All priorities", "Low", "Medium", "High", "Critical"];
-const STATUS_FILTER_OPTIONS = ["All statuses", "In Progress", "Completed", "Delayed", "Planned"];
-
-const PRIORITY_WINDOWS = {
-  Low: { totalMinutes: 72 * 60, label: "Up to 72 Hrs" },
-  Medium: { totalMinutes: 24 * 60, label: "Up to 24 Hrs" },
-  High: { totalMinutes: 6 * 60, label: "Up to 6 Hrs" },
-  Critical: { totalMinutes: 60, label: "Up to 1 Hr" },
-};
+const STATUS_FILTER_OPTIONS = ["All statuses", "In Progress", "Completed", "Blocked"];
 
 const containerStyle = {
   minHeight: "100vh",
@@ -248,12 +282,12 @@ const normalizeStatus = (status) => {
   if (raw === "done" || raw === "completed" || compact === "complete" || compact === "resolved" || compact === "closed") {
     return "Completed";
   }
-  if (raw === "blocked" || raw === "delayed" || compact === "blocked") return "Delayed";
+  if (raw === "blocked" || raw === "delayed" || compact === "blocked") return "Blocked";
   if (compact === "inprogress" || compact === "analysis" || compact === "codereview" || compact === "qa" || compact === "milestone") {
     return "In Progress";
   }
   if (raw === "in progress" || compact === "inprogress") return "In Progress";
-  if (raw === "todo" || raw === "planned") return "Planned";
+  if (raw === "todo" || raw === "planned") return "In Progress";
   return status
     ? status
         .toString()
@@ -263,98 +297,154 @@ const normalizeStatus = (status) => {
     : "In Progress";
 };
 
-const computeProgressMeta = (task, now) => {
-  const window = PRIORITY_WINDOWS[task.priority] || PRIORITY_WINDOWS.Medium;
-  const totalMinutes = task.totalMinutes || window.totalMinutes;
+const isBlockedStatus = (status) => status === "Blocked";
 
-  if (totalMinutes && Number.isFinite(totalMinutes)) {
-    const baseAccumulated = Math.max(0, Number(task.accumulatedMinutes ?? 0));
-    const referenceStart =
-      parseDateTime(task.lastStartedAt) || parseDateTime(task.start) || new Date();
-
-    let elapsedMinutes = baseAccumulated;
-    if (!task.isPaused && referenceStart) {
-      elapsedMinutes += Math.max(0, (now - referenceStart.getTime()) / 60000);
-    }
-
-    const percentRaw = totalMinutes > 0 ? (elapsedMinutes / totalMinutes) * 100 : 0;
-    const percent = Math.min(Math.max(percentRaw, 0), 100);
-    const overtimePercent = percentRaw > 100 ? percentRaw - 100 : 0;
-    const remainingMinutes = Math.max(totalMinutes - elapsedMinutes, 0);
-    const overdueMinutes = Math.max(elapsedMinutes - totalMinutes, 0);
-    const overdue = overdueMinutes > 0 && task.status !== "Completed";
-
-    let timeLabel = "—";
-    if (task.status === "Completed") {
-      timeLabel = "Completed";
-    } else if (overdue) {
-      timeLabel = `Overdue by ${formatDurationMinutes(overdueMinutes)}`;
-    } else {
-      timeLabel = `${formatDurationMinutes(remainingMinutes)} left`;
-    }
-
-    const elapsedLabel = `${Math.round(Math.min(percentRaw, 100))}% elapsed`;
-
-    return {
-      percent,
-      overtimePercent,
-      overdue,
-      remainingMinutes,
-      overdueMinutes,
-      elapsedMinutes,
-      timeLabel,
-      elapsedLabel,
-    };
-  }
-
-  const percent = Math.min(Math.max(task.progress ?? 0, 0), 100);
-  const overtimePercent = percent > 100 ? percent - 100 : 0;
-  const overdue =
-    task.status !== "Completed" &&
-    (overtimePercent > 0 || (task.end && parseDateTime(task.end)?.getTime() < now));
-
-  return {
-    percent: Math.min(percent, 100),
-    overtimePercent,
-    overdue,
-    remainingMinutes: null,
-    overdueMinutes: null,
-    elapsedMinutes: null,
-    timeLabel: overdue ? "Overdue" : `${Math.max(0, 100 - percent)}% remaining`,
-    elapsedLabel: `${Math.round(Math.min(percent, 100))}% elapsed`,
-  };
+const normalizeEmail = (value) => {
+  if (!value || typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  return trimmed || null;
 };
 
-const mapApiTaskToUserRow = (task, projectLookup = {}) => {
+const toEmailArray = (value) => {
+  if (!value) return [];
+  const source = Array.isArray(value)
+    ? value
+    : value
+        .toString()
+        .split(",")
+        .map((entry) => entry.trim());
+  const normalized = source
+    .map((entry) => normalizeEmail(entry))
+    .filter(Boolean);
+  return Array.from(new Set(normalized));
+};
+
+const mapUserEntry = (entry, fallbackTitle) => ({
+  projectId: entry?.project_id ?? entry?.projectId ?? null,
+  projectTitle:
+    entry?.project_title ?? entry?.projectTitle ?? fallbackTitle ?? "—",
+  ownerEmail: entry?.owner_email ?? entry?.ownerEmail ?? entry?.email ?? null,
+});
+
+const taskVisibleToEmail = (task, email) => {
+  if (!email) return true;
+  const normalizedTarget = normalizeEmail(email);
+  if (!normalizedTarget) return true;
+
+  const candidateEmails = [];
+  if (task.assigneeEmail) candidateEmails.push(task.assigneeEmail);
+  if (task.ownerEmail) candidateEmails.push(task.ownerEmail);
+
+  if (Array.isArray(task.teamEmails) && task.teamEmails.length) {
+    task.teamEmails.forEach((email) => {
+      if (email) candidateEmails.push(email);
+    });
+  }
+
+  if (Array.isArray(task.userEntries)) {
+    task.userEntries.forEach((entry) => {
+      if (entry?.ownerEmail) candidateEmails.push(entry.ownerEmail);
+    });
+  }
+
+  return candidateEmails.some(
+    (candidate) => normalizeEmail(candidate) === normalizedTarget
+  );
+};
+
+const filterTasksForUser = (tasks, email) => {
+  if (!email) return tasks;
+  return tasks.filter((task) => taskVisibleToEmail(task, email));
+};
+
+const getCompletionDurationMinutes = (task) => {
+  if (!task) return null;
+
+  if (Number.isFinite(task.accumulatedMinutes) && task.accumulatedMinutes > 0) {
+    return Math.max(0, Number(task.accumulatedMinutes));
+  }
+
+  const completedAt =
+    parseDateTime(task.completedAt) ||
+    parseDateTime(task.completed_at) ||
+    parseDateTime(task.end);
+  const startedAt =
+    parseDateTime(task.lastStartedAt) ||
+    parseDateTime(task.start) ||
+    parseDateTime(task.created_at);
+
+  if (completedAt && startedAt) {
+    return Math.max(0, (completedAt.getTime() - startedAt.getTime()) / 60000);
+  }
+
+  return null;
+};
+
+const mapApiTaskToAdminRow = (
+  task,
+  ticketProjectLookup = {},
+  projectMembershipLookup = {}
+) => {
   const priority = normalizePriority(task.priority);
   const status = normalizeStatus(task.status);
   const window = PRIORITY_WINDOWS[priority] || PRIORITY_WINDOWS.Medium;
   const stageMinutesArray = Array.isArray(task.stage_minutes) ? task.stage_minutes : [];
   const totalMinutes =
-    (stageMinutesArray.length > 1 && Number(stageMinutesArray[1])) ||
-    task.total_minutes ||
-    window.totalMinutes;
+    (stageMinutesArray.length > 1 && Number(stageMinutesArray[1])) || window.totalMinutes;
+
+  const ticketMeta =
+    ticketProjectLookup?.[task.ticket_id] ?? ticketProjectLookup?.[String(task.ticket_id)] ?? null;
 
   const startDate = parseDateTime(task.start) || parseDateTime(task.created_at);
   const startIso = startDate ? startDate.toISOString() : null;
   const accumulatedMinutes = Number(task.accumulated_minutes ?? 0);
   const lastStartedAt = task.last_started_at || startIso;
   const endIso =
-    task.end ||
-    (startDate && totalMinutes
+    startDate && totalMinutes
       ? new Date(startDate.getTime() + totalMinutes * 60000).toISOString()
-      : null);
-  const projectMeta = projectLookup?.[task.ticket_id] || {};
+      : null;
+
+  const projectIdCandidate =
+    task.project_id ?? ticketMeta?.projectId ?? ticketMeta?.project_id ?? null;
+  const membership =
+    projectIdCandidate != null
+      ? projectMembershipLookup?.[projectIdCandidate] ||
+        projectMembershipLookup?.[String(projectIdCandidate)] ||
+        null
+      : null;
+
   const projectTitle =
     task.project_title ||
-    projectMeta.projectTitle ||
+    ticketMeta?.projectTitle ||
+    membership?.projectTitle ||
     task.project ||
     "—";
-  const projectId = task.project_id ?? projectMeta.projectId ?? null;
+  const projectId = projectIdCandidate;
   const ticketCode =
     task.ticket_code ||
-    projectMeta.ticketCode ||
+    ticketMeta?.ticketCode ||
     (task.ticket_id != null ? `FL${String(task.ticket_id).padStart(4, "0")}V` : null);
+  const ownerEmail = task.owner_email || task.ownerEmail || null;
+  const userEntriesRaw = Array.isArray(task.user_entries) ? task.user_entries : [];
+  const userEntries = userEntriesRaw.map((entry) => mapUserEntry(entry, projectTitle));
+  const firstEntryEmail =
+    userEntries.find((entry) => normalizeEmail(entry.ownerEmail))?.ownerEmail ?? null;
+  const timelineTeam = toEmailArray(task.team_members);
+  const timelineLeads = toEmailArray(task.leads);
+  const metaTeam = toEmailArray(ticketMeta?.teamEmails);
+  const membershipTeam = Array.isArray(membership?.teamEmails)
+    ? membership.teamEmails
+    : toEmailArray(membership?.teamEmails);
+  const combinedTeamEmails = Array.from(
+    new Set([...membershipTeam, ...metaTeam, ...timelineTeam, ...timelineLeads])
+  );
+  const assigneeEmail =
+    task.assignee_email ||
+    task.assigneeEmail ||
+    task.assignee ||
+    firstEntryEmail ||
+    ownerEmail ||
+    null;
 
   return {
     id: `timeline-${task.id ?? task.ticket_id}`,
@@ -372,8 +462,13 @@ const mapApiTaskToUserRow = (task, projectLookup = {}) => {
     accumulatedMinutes: Number.isFinite(accumulatedMinutes) ? accumulatedMinutes : 0,
     lastStartedAt,
     isPaused: Boolean(task.is_paused),
-    completedAt: task.completed_at,
+    completedAt: task.completed_at || task.completedAt || null,
     blockedAt: task.blocked_at,
+    completed_at: task.completed_at,
+    ownerEmail,
+    assigneeEmail,
+    userEntries,
+    teamEmails: combinedTeamEmails,
   };
 };
 
@@ -432,8 +527,124 @@ const convertStatsPayload = (payload) => {
   };
 };
 
+const computeProgressMeta = (task, now) => {
+  const window = PRIORITY_WINDOWS[task.priority] || PRIORITY_WINDOWS.Medium;
+  const totalMinutes = task.totalMinutes || window.totalMinutes;
+  const status = task.status;
+  const isCompleted = status === "Completed";
+  const isBlocked = isBlockedStatus(status);
+  const completionMinutesOverride = getCompletionDurationMinutes(task);
+  const completionLabelOverride =
+    completionMinutesOverride != null
+      ? formatDurationMinutes(completionMinutesOverride)
+      : null;
+  const isEffectivelyPaused = isCompleted || isBlocked || task.isPaused;
+
+  if (totalMinutes && Number.isFinite(totalMinutes)) {
+    const baseAccumulated = Math.max(0, Number(task.accumulatedMinutes ?? 0));
+    const referenceStart =
+      parseDateTime(task.lastStartedAt) || parseDateTime(task.start) || new Date();
+
+    let elapsedMinutes = baseAccumulated;
+    if (!isEffectivelyPaused && referenceStart) {
+      elapsedMinutes += Math.max(0, (now - referenceStart.getTime()) / 60000);
+    }
+
+    const percentRaw = totalMinutes > 0 ? (elapsedMinutes / totalMinutes) * 100 : 0;
+    const percent = Math.min(Math.max(percentRaw, 0), 100);
+    const overtimePercent =
+      isCompleted || isBlocked ? 0 : percentRaw > 100 ? percentRaw - 100 : 0;
+    const remainingMinutes = Math.max(totalMinutes - elapsedMinutes, 0);
+    const overdueMinutes = Math.max(elapsedMinutes - totalMinutes, 0);
+    const overdue = !isCompleted && !isBlocked && overdueMinutes > 0;
+
+    if (isCompleted) {
+      const completionLabel =
+        completionLabelOverride || formatDurationMinutes(elapsedMinutes);
+      return {
+        percent,
+        overtimePercent: 0,
+        overdue: false,
+        remainingMinutes: 0,
+        overdueMinutes: 0,
+        elapsedMinutes,
+        timeLabel: completionLabel ? `Completed in ${completionLabel}` : "Completed",
+        elapsedLabel:
+          completionLabel || `${Math.round(Math.min(percentRaw, 100))}% elapsed`,
+      };
+    }
+
+    if (isBlocked) {
+      return {
+        percent,
+        overtimePercent: 0,
+        overdue: false,
+        remainingMinutes,
+        overdueMinutes: 0,
+        elapsedMinutes,
+        timeLabel: "Paused (Blocked)",
+        elapsedLabel: `${Math.round(Math.min(percentRaw, 100))}% elapsed`,
+      };
+    }
+
+    const timeLabel = overdue
+      ? `Overdue by ${formatDurationMinutes(overdueMinutes)}`
+      : `${formatDurationMinutes(remainingMinutes)} left`;
+    const elapsedLabel = `${Math.round(Math.min(percentRaw, 100))}% elapsed`;
+
+    return {
+      percent,
+      overtimePercent,
+      overdue,
+      remainingMinutes,
+      overdueMinutes,
+      elapsedMinutes,
+      timeLabel,
+      elapsedLabel,
+    };
+  }
+
+  const basePercent = Math.min(Math.max(task.progress ?? 0, 0), 100);
+  const percent = isCompleted ? 100 : basePercent;
+  const overtimePercent =
+    !isCompleted && !isBlocked && basePercent > 100 ? basePercent - 100 : 0;
+  const overdue =
+    !isCompleted &&
+    !isBlocked &&
+    (overtimePercent > 0 || (task.end && parseDateTime(task.end)?.getTime() < now));
+
+  const completionMinutes =
+    isCompleted && completionMinutesOverride != null
+      ? completionMinutesOverride
+      : null;
+  const completionLabel =
+    completionMinutes != null
+      ? formatDurationMinutes(completionMinutes)
+      : completionLabelOverride;
+
+  return {
+    percent: Math.min(percent, 100),
+    overtimePercent,
+    overdue,
+    remainingMinutes: null,
+    overdueMinutes: null,
+    elapsedMinutes: null,
+    timeLabel: isCompleted
+      ? completionLabel
+        ? `Completed in ${completionLabel}`
+        : "Completed"
+      : isBlocked
+      ? "Paused (Blocked)"
+      : overdue
+      ? "Overdue"
+      : `${Math.max(0, 100 - percent)}% remaining`,
+    elapsedLabel:
+      completionLabel ||
+      `${Math.round(Math.min(isCompleted ? 100 : percent, 100))}% elapsed`,
+  };
+};
+
 const Timeline = () => {
-  const { user } = useAuth();
   const [tasks, setTasks] = useState(INITIAL_TASKS);
   const [stats, setStats] = useState(null);
 
@@ -446,77 +657,79 @@ const Timeline = () => {
   const [now, setNow] = useState(() => Date.now());
   const [clockOffset, setClockOffset] = useState(0);
 
-  const userEmail = useMemo(() => {
-    if (user?.email) return user.email;
-    try {
-      const saved = JSON.parse(localStorage.getItem("user") || "{}");
-      return saved.email || null;
-    } catch {
-      return null;
-    }
-  }, [user]);
+  const { user } = useAuth();
+  const currentUserEmail = user?.email ?? null;
 
   const fetchTimelineData = useCallback(async () => {
     setLoading(true);
     setError(null);
-
     try {
-      const projectUrl = userEmail
-        ? `${PROJECTS_URL}?user_email=${encodeURIComponent(userEmail)}`
-        : PROJECTS_URL;
-
-      const [timelineRes, adminRes, projectsRes, statsRes] = await Promise.all([
+      const [timelineRes, adminRes, statsRes, projectsRes] = await Promise.all([
         fetch(TIMELINE_URL),
         fetch(ADMIN_TICKETS_URL),
-        fetch(projectUrl),
         fetch(TIMELINE_STATS_URL).catch(() => null),
+        fetch(PROJECTS_URL).catch(() => null),
       ]);
 
-      const projectNamesById = {};
-      const allowedProjectIds = new Set();
-      if (projectsRes.ok) {
-        const projects = await projectsRes.json();
-        projects.forEach((project) => {
-          if (project?.id != null) {
-            allowedProjectIds.add(project.id);
-            projectNamesById[project.id] = project.name;
-          }
-        });
-      }
-
-      const ticketProjectMap = {};
+      let ticketProjectLookup = {};
       if (adminRes.ok) {
         const adminTickets = await adminRes.json();
-        adminTickets.forEach((ticket) => {
-          if (ticket?.ticket_id == null) return;
-          const projectId = ticket.project_id;
-          if (!allowedProjectIds.has(projectId)) return;
-          ticketProjectMap[ticket.ticket_id] = {
-            projectId,
-            projectTitle:
-              ticket.project_title ||
-              projectNamesById[projectId] ||
-              "—",
+        ticketProjectLookup = adminTickets.reduce((acc, ticket) => {
+          const key = ticket.ticket_id ?? String(ticket.ticket_id);
+          acc[key] = {
+            projectTitle: ticket.project_title || "—",
+            projectId: ticket.project_id,
             ticketCode: ticket.ticket_code || null,
           };
-        });
+          return acc;
+        }, {});
       }
 
+      let projectMembershipLookup = {};
+      if (projectsRes && projectsRes.ok) {
+        const projectsData = await projectsRes.json();
+        projectMembershipLookup = projectsData.reduce((acc, project) => {
+          const teamEmails = toEmailArray(project.team_members);
+          const leadEmails = toEmailArray(project.leads);
+          const combined = Array.from(new Set([...teamEmails, ...leadEmails]));
+          const key = project.id ?? String(project.id);
+          acc[key] = {
+            projectTitle: project.name || "—",
+            teamEmails: combined,
+          };
+          return acc;
+        }, {});
+      }
+
+      Object.values(ticketProjectLookup).forEach((meta) => {
+        if (!meta || meta.projectId == null) return;
+        const membership =
+          projectMembershipLookup?.[meta.projectId] ||
+          projectMembershipLookup?.[String(meta.projectId)] ||
+          null;
+        if (membership) {
+          if (!meta.projectTitle) {
+            meta.projectTitle = membership.projectTitle;
+          }
+          meta.teamEmails = membership.teamEmails;
+        }
+      });
+
       if (timelineRes.ok) {
-        const payload = await timelineRes.json();
+        const timelinePayload = await timelineRes.json();
         let tasksPayload = [];
         let serverNowValue = null;
 
-        if (payload && !Array.isArray(payload)) {
-          tasksPayload = Array.isArray(payload.tasks) ? payload.tasks : [];
-          if (payload.server_now) {
-            const parsed = Date.parse(payload.server_now);
+        if (timelinePayload && !Array.isArray(timelinePayload)) {
+          tasksPayload = Array.isArray(timelinePayload.tasks) ? timelinePayload.tasks : [];
+          if (timelinePayload.server_now) {
+            const parsed = Date.parse(timelinePayload.server_now);
             if (!Number.isNaN(parsed)) {
               serverNowValue = parsed;
             }
           }
-        } else if (Array.isArray(payload)) {
-          tasksPayload = payload;
+        } else if (Array.isArray(timelinePayload)) {
+          tasksPayload = timelinePayload;
         }
 
         if (serverNowValue !== null) {
@@ -525,28 +738,15 @@ const Timeline = () => {
           setClockOffset(0);
         }
 
-        const filteredTasks = tasksPayload.filter((task) => {
-          const projectId =
-            task.project_id ??
-            ticketProjectMap[task.ticket_id]?.projectId ??
-            null;
-          if (projectId == null) {
-            return false;
-          }
-          if (allowedProjectIds.size === 0) {
-            return Boolean(ticketProjectMap[task.ticket_id]);
-          }
-          return allowedProjectIds.has(projectId);
-        });
-
-        const mapped = filteredTasks.map((task) =>
-          mapApiTaskToUserRow(task, ticketProjectMap)
+        const mappedTasks = tasksPayload.map((task) =>
+          mapApiTaskToAdminRow(task, ticketProjectLookup, projectMembershipLookup)
         );
 
-        if (mapped.length) {
-          const summaryFromTasks = buildSummaryFromTasks(mapped);
-          setStats(summaryFromTasks);
-          setTasks(mapped);
+        const scopedTasks = filterTasksForUser(mappedTasks, currentUserEmail);
+
+        if (scopedTasks.length) {
+          setStats(buildSummaryFromTasks(scopedTasks));
+          setTasks(scopedTasks);
         } else {
           let statsSummary = null;
           if (statsRes && statsRes.ok) {
@@ -554,32 +754,31 @@ const Timeline = () => {
               const statsPayload = await statsRes.json();
               statsSummary = convertStatsPayload(statsPayload);
             } catch (err) {
-              console.warn("Failed to parse timeline stats payload", err);
+              console.warn("Portal timeline: failed to parse stats payload", err);
             }
           }
-          if (statsSummary) {
-            setStats(statsSummary);
-          } else {
-            setStats(buildSummaryFromTasks(INITIAL_TASKS));
-          }
-          setTasks(INITIAL_TASKS);
+          const fallbackTasks = currentUserEmail ? [] : INITIAL_TASKS;
+          setStats(statsSummary ?? buildSummaryFromTasks(fallbackTasks));
+          setTasks(fallbackTasks);
         }
       } else {
-        setTasks(INITIAL_TASKS);
-        setStats(buildSummaryFromTasks(INITIAL_TASKS));
+        const fallbackTasks = currentUserEmail ? [] : INITIAL_TASKS;
+        setTasks(fallbackTasks);
+        setStats(buildSummaryFromTasks(fallbackTasks));
         setClockOffset(0);
         setError("Unable to load timeline data");
       }
     } catch (err) {
-      console.error("User timeline: failed to fetch tasks", err);
+      console.error("Portal timeline: failed to fetch tasks", err);
       setError(err.message || "Failed to load timeline data");
-      setTasks(INITIAL_TASKS);
-      setStats(buildSummaryFromTasks(INITIAL_TASKS));
+      const fallbackTasks = currentUserEmail ? [] : INITIAL_TASKS;
+      setTasks(fallbackTasks);
+      setStats(buildSummaryFromTasks(fallbackTasks));
       setClockOffset(0);
     } finally {
       setLoading(false);
     }
-  }, [userEmail]);
+  }, [currentUserEmail]);
 
   useEffect(() => {
     fetchTimelineData();
@@ -886,11 +1085,11 @@ const Timeline = () => {
           ))}
         </div>
 
-      {(loading || error) && (
-        <div style={{ fontSize: "13px", color: error ? "#b91c1c" : "#64748b", marginBottom: "12px" }}>
-          {loading ? "Syncing your project timeline…" : `⚠ ${error}`}
-        </div>
-      )}
+        {(loading || error) && (
+          <div style={{ fontSize: "13px", color: error ? "#b91c1c" : "#64748b", marginBottom: "12px" }}>
+            {loading ? "Syncing live ticket timeline…" : `⚠ ${error}`}
+          </div>
+        )}
 
         <div style={tableWrapperStyle}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
