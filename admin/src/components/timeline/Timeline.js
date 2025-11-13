@@ -267,6 +267,24 @@ const formatDurationMinutes = (minutes) => {
   return parts.join(" ");
 };
 
+const normalizeEmail = (value) => {
+  if (!value || typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || !trimmed.includes("@")) return null;
+  return trimmed.toLowerCase();
+};
+
+const toEmailArray = (value) => {
+  if (!value) return [];
+  const source = Array.isArray(value)
+    ? value
+    : value
+        .toString()
+        .split(",")
+        .map((entry) => entry.trim());
+  return Array.from(new Set(source.map((entry) => normalizeEmail(entry)).filter(Boolean)));
+};
+
 const normalizePriority = (priority) => {
   const key = (priority || "Medium").toString().toLowerCase();
   if (key.includes("critical")) return "Critical";
@@ -329,6 +347,11 @@ const mapApiTaskToAdminRow = (task, projectLookup = {}) => {
   const totalMinutes =
     (stageMinutesArray.length > 1 && Number(stageMinutesArray[1])) || window.totalMinutes;
 
+  const ticketMeta =
+    projectLookup?.[task.ticket_id] ??
+    projectLookup?.[task.ticket_id != null ? task.ticket_id.toString() : undefined] ??
+    null;
+
   const startDate = parseDateTime(task.start) || parseDateTime(task.created_at);
   const startIso = startDate ? startDate.toISOString() : null;
   const accumulatedMinutes = Number(task.accumulated_minutes ?? 0);
@@ -339,14 +362,42 @@ const mapApiTaskToAdminRow = (task, projectLookup = {}) => {
       : null;
   const projectTitle =
     task.project_title ||
-    projectLookup?.[task.ticket_id]?.projectTitle ||
+    ticketMeta?.projectTitle ||
     task.project ||
     "—";
-  const projectId = task.project_id ?? projectLookup?.[task.ticket_id]?.projectId ?? null;
+  const projectId = task.project_id ?? ticketMeta?.projectId ?? null;
   const ticketCode =
     task.ticket_code ||
-    projectLookup?.[task.ticket_id]?.ticketCode ||
+    ticketMeta?.ticketCode ||
     (task.ticket_id != null ? `FL${String(task.ticket_id).padStart(4, "0")}V` : null);
+  const ownerEmail = normalizeEmail(
+    task.owner_email || task.ownerEmail || task.email || ticketMeta?.ownerEmail || null
+  );
+  const userEntriesRaw = Array.isArray(task.user_entries) ? task.user_entries : [];
+  const userEntryEmails = userEntriesRaw
+    .map((entry) =>
+      normalizeEmail(entry?.owner_email ?? entry?.ownerEmail ?? entry?.email ?? null)
+    )
+    .filter(Boolean);
+  const teamMembers = [
+    ...toEmailArray(task.team_members),
+    ...toEmailArray(ticketMeta?.teamEmails),
+  ];
+  const leads = [
+    ...toEmailArray(task.leads),
+    ...toEmailArray(ticketMeta?.leadEmails),
+  ];
+  const assigneeEmail =
+    normalizeEmail(task.assignee_email) ||
+    normalizeEmail(task.assigneeEmail) ||
+    normalizeEmail(task.assigneeEmailId) ||
+    normalizeEmail(task.assignee) ||
+    normalizeEmail(ticketMeta?.assigneeEmail) ||
+    userEntryEmails[0] ||
+    teamMembers[0] ||
+    leads[0] ||
+    ownerEmail ||
+    null;
 
   return {
     id: `timeline-${task.id ?? task.ticket_id}`,
@@ -367,6 +418,8 @@ const mapApiTaskToAdminRow = (task, projectLookup = {}) => {
     completedAt: task.completed_at || task.completedAt || null,
     blockedAt: task.blocked_at,
     completed_at: task.completed_at,
+    ownerEmail,
+    assigneeEmail,
   };
 };
 
@@ -569,11 +622,22 @@ const Timeline = () => {
       if (adminRes.ok) {
         const adminTickets = await adminRes.json();
         projectLookup = adminTickets.reduce((acc, ticket) => {
-          acc[ticket.ticket_id] = {
+          const entry = {
             projectTitle: ticket.project_title || "—",
             projectId: ticket.project_id,
             ticketCode: ticket.ticket_code || null,
+            assigneeEmail: normalizeEmail(ticket.assignee_email || ticket.assignee || ticket.owner_email || null),
+            ownerEmail: normalizeEmail(ticket.owner_email || ticket.ownerEmail || ticket.reporter_email || ticket.reporter || null),
+            teamEmails: toEmailArray(ticket.team_members),
+            leadEmails: toEmailArray(ticket.leads),
           };
+
+          const rawId = ticket.ticket_id;
+          if (rawId !== undefined && rawId !== null) {
+            acc[rawId] = entry;
+            const stringKey = rawId.toString();
+            acc[stringKey] = entry;
+          }
           return acc;
         }, {});
       }
@@ -996,6 +1060,11 @@ const Timeline = () => {
                       {task.name && (
                         <div style={{ fontSize: "13px", color: "#475569", marginTop: "4px" }}>
                           {task.name}
+                        </div>
+                      )}
+                      {task.assigneeEmail && (
+                        <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
+                          {task.assigneeEmail}
                         </div>
                       )}
                       <div style={{ fontSize: "13px", color: "#64748b", marginTop: "4px" }}>

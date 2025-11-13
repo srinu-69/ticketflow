@@ -301,8 +301,9 @@ const isBlockedStatus = (status) => status === "Blocked";
 
 const normalizeEmail = (value) => {
   if (!value || typeof value !== "string") return null;
-  const trimmed = value.trim().toLowerCase();
-  return trimmed || null;
+  const trimmed = value.trim();
+  if (!trimmed || !trimmed.includes("@")) return null;
+  return trimmed.toLowerCase();
 };
 
 const toEmailArray = (value) => {
@@ -323,7 +324,8 @@ const mapUserEntry = (entry, fallbackTitle) => ({
   projectId: entry?.project_id ?? entry?.projectId ?? null,
   projectTitle:
     entry?.project_title ?? entry?.projectTitle ?? fallbackTitle ?? "—",
-  ownerEmail: entry?.owner_email ?? entry?.ownerEmail ?? entry?.email ?? null,
+  ownerEmail:
+    normalizeEmail(entry?.owner_email ?? entry?.ownerEmail ?? entry?.email ?? null),
 });
 
 const taskVisibleToEmail = (task, email) => {
@@ -393,7 +395,10 @@ const mapApiTaskToAdminRow = (
     (stageMinutesArray.length > 1 && Number(stageMinutesArray[1])) || window.totalMinutes;
 
   const ticketMeta =
-    ticketProjectLookup?.[task.ticket_id] ?? ticketProjectLookup?.[String(task.ticket_id)] ?? null;
+    ticketProjectLookup?.[task.ticket_id] ??
+    ticketProjectLookup?.[task.ticket_id != null ? task.ticket_id.toString() : undefined] ??
+    ticketProjectLookup?.[task.ticket_code] ??
+    null;
 
   const startDate = parseDateTime(task.start) || parseDateTime(task.created_at);
   const startIso = startDate ? startDate.toISOString() : null;
@@ -424,26 +429,38 @@ const mapApiTaskToAdminRow = (
     task.ticket_code ||
     ticketMeta?.ticketCode ||
     (task.ticket_id != null ? `FL${String(task.ticket_id).padStart(4, "0")}V` : null);
-  const ownerEmail = task.owner_email || task.ownerEmail || null;
+  const ownerEmail = normalizeEmail(
+    task.owner_email || task.ownerEmail || task.email || ticketMeta?.ownerEmail || null
+  );
   const userEntriesRaw = Array.isArray(task.user_entries) ? task.user_entries : [];
   const userEntries = userEntriesRaw.map((entry) => mapUserEntry(entry, projectTitle));
   const firstEntryEmail =
-    userEntries.find((entry) => normalizeEmail(entry.ownerEmail))?.ownerEmail ?? null;
+    userEntries.find((entry) => entry.ownerEmail)?.ownerEmail ?? null;
   const timelineTeam = toEmailArray(task.team_members);
   const timelineLeads = toEmailArray(task.leads);
   const metaTeam = toEmailArray(ticketMeta?.teamEmails);
-  const membershipTeam = Array.isArray(membership?.teamEmails)
-    ? membership.teamEmails
-    : toEmailArray(membership?.teamEmails);
+  const metaLeads = toEmailArray(ticketMeta?.leadEmails);
+  const membershipTeam = toEmailArray(membership?.teamEmails);
+  const membershipLeads = toEmailArray(membership?.leadEmails);
   const combinedTeamEmails = Array.from(
-    new Set([...membershipTeam, ...metaTeam, ...timelineTeam, ...timelineLeads])
+    new Set([
+      ...membershipTeam,
+      ...metaTeam,
+      ...timelineTeam,
+      ...timelineLeads,
+      ...metaLeads,
+      ...membershipLeads,
+    ])
   );
   const assigneeEmail =
-    task.assignee_email ||
-    task.assigneeEmail ||
-    task.assignee ||
+    normalizeEmail(task.assignee_email) ||
+    normalizeEmail(task.assigneeEmail) ||
+    normalizeEmail(task.assigneeEmailId) ||
+    normalizeEmail(task.assignee) ||
+    normalizeEmail(ticketMeta?.assigneeEmail) ||
     firstEntryEmail ||
     ownerEmail ||
+    combinedTeamEmails[0] ||
     null;
 
   return {
@@ -675,12 +692,30 @@ const Timeline = () => {
       if (adminRes.ok) {
         const adminTickets = await adminRes.json();
         ticketProjectLookup = adminTickets.reduce((acc, ticket) => {
-          const key = ticket.ticket_id ?? String(ticket.ticket_id);
-          acc[key] = {
+          const entry = {
             projectTitle: ticket.project_title || "—",
             projectId: ticket.project_id,
             ticketCode: ticket.ticket_code || null,
+            assigneeEmail: normalizeEmail(
+              ticket.assignee_email || ticket.assignee || ticket.owner_email || null
+            ),
+            ownerEmail: normalizeEmail(
+              ticket.owner_email || ticket.ownerEmail || ticket.reporter_email || ticket.reporter || null
+            ),
+            teamEmails: toEmailArray(ticket.team_members),
+            leadEmails: toEmailArray(ticket.leads),
           };
+
+          const rawId = ticket.ticket_id;
+          if (rawId !== undefined && rawId !== null) {
+            acc[rawId] = entry;
+            const stringKey = rawId.toString();
+            acc[stringKey] = entry;
+          }
+          const ticketCodeKey = ticket.ticket_code || ticket.ticketCode;
+          if (ticketCodeKey) {
+            acc[ticketCodeKey] = entry;
+          }
           return acc;
         }, {});
       }
@@ -692,11 +727,17 @@ const Timeline = () => {
           const teamEmails = toEmailArray(project.team_members);
           const leadEmails = toEmailArray(project.leads);
           const combined = Array.from(new Set([...teamEmails, ...leadEmails]));
-          const key = project.id ?? String(project.id);
-          acc[key] = {
+          const entry = {
             projectTitle: project.name || "—",
             teamEmails: combined,
+            leadEmails,
           };
+          const rawId = project.id;
+          if (rawId !== undefined && rawId !== null) {
+            acc[rawId] = entry;
+            const stringKey = rawId.toString();
+            acc[stringKey] = entry;
+          }
           return acc;
         }, {});
       }
@@ -712,6 +753,7 @@ const Timeline = () => {
             meta.projectTitle = membership.projectTitle;
           }
           meta.teamEmails = membership.teamEmails;
+          meta.leadEmails = membership.leadEmails;
         }
       });
 
@@ -1138,6 +1180,11 @@ const Timeline = () => {
                       {task.name && (
                         <div style={{ fontSize: "13px", color: "#475569", marginTop: "4px" }}>
                           {task.name}
+                        </div>
+                      )}
+                      {task.assigneeEmail && (
+                        <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
+                          {task.assigneeEmail}
                         </div>
                       )}
                       <div style={{ fontSize: "13px", color: "#64748b", marginTop: "4px" }}>

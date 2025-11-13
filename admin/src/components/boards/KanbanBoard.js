@@ -1682,6 +1682,12 @@ export default function KanbanBoard() {
     try {
       const issueId = e.dataTransfer.getData('text/plain');
       const issue = issues.find(i => i.id === issueId);
+      if (!issue) {
+        return;
+      }
+      if (issue.status === 'done' && targetStatus !== 'done') {
+        return;
+      }
       const srcLaneId = issue.epic || issue.projectId;
       if (srcLaneId === swimlaneId && issue.status !== targetStatus) {
         await moveIssue(issueId, targetStatus);

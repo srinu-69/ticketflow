@@ -1045,7 +1045,13 @@ export default function KanbanBoard() {
     e.preventDefault();
     const issueId = e.dataTransfer.getData('text/plain');
     const issue = issues.find(i => i.id === issueId);
-    if (issue && issue.status !== status) {
+    if (!issue) {
+      return;
+    }
+    if (issue.status === 'done' && status !== 'done') {
+      return;
+    }
+    if (issue.status !== status) {
       try {
         await moveIssue(issueId, status);
         const refreshed = await listIssues(currentProject ? currentProject.id : null);
