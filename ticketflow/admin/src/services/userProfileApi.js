@@ -69,7 +69,17 @@ export async function updateUserProfile(userId, profileData) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(profileData),
     });
-    if (!response.ok) throw new Error('Failed to update user profile');
+    if (!response.ok) {
+      let errorMessage = 'Failed to update user profile';
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.detail || errorMessage;
+      } catch (e) {
+        // If response is not JSON, use status text
+        errorMessage = response.statusText || errorMessage;
+      }
+      throw new Error(errorMessage);
+    }
     return await response.json();
   } catch (error) {
     console.error('Error updating user profile:', error);
@@ -87,6 +97,32 @@ export async function deleteUserProfile(userId) {
     return true;
   } catch (error) {
     console.error('Error deleting user profile:', error);
+    throw error;
+  }
+}
+
+// Update user in users_management table (admin edits)
+// This will also auto-sync to user_profile table
+export async function updateUserFromManagement(userId, userData) {
+  try {
+    const response = await fetch(`${API_URL}/users-management/${userId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(userData),
+    });
+    if (!response.ok) {
+      let errorMessage = 'Failed to update user';
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.detail || errorMessage;
+      } catch (e) {
+        errorMessage = response.statusText || errorMessage;
+      }
+      throw new Error(errorMessage);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error updating user from management:', error);
     throw error;
   }
 }

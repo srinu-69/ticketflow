@@ -23,44 +23,6 @@ import { listAssets, addAsset, updateAsset, deleteAsset } from "../assetsApi";
 import { useAuth } from "../../context/AuthContext";
 
 
-// Mock API functions
-const mockAssets = [
-  {
-    id: "1",
-    email: "john@example.com",
-    type: "Laptop",
-    location: "WFO",
-    status: "active",
-    description: "John's primary work laptop.",
-    openDate: new Date().toISOString(),
-  },
-  {
-    id: "2",
-    email: "user2@example.com",
-    type: "Charger",
-    location: "WFO",
-    status: "active",
-    description: "Charger for MacBook Pro.",
-    openDate: new Date().toISOString(),
-  },
-  {
-    id: "3",
-    email: "user3@example.com",
-    type: "NetworkIssue",
-    location: "WFO",
-    status: "active",
-    description: "Reported intermittent connectivity.",
-    openDate: new Date().toISOString(),
-  },
-];
-
-// let assetsDB = [...mockAssets];
-
-// const listAssets = () => Promise.resolve([...assetsDB]);
-// const addAsset = (asset) => {
-//   assetsDB.push(asset);
-//   return Promise.resolve(asset);
-// };
 
 const generateId = () =>
   `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -85,6 +47,7 @@ export default function AssetsBoard() {
   const [quickAdd, setQuickAdd] = useState({});
   const [draggedAsset, setDraggedAsset] = useState(null);
   const [toast, setToast] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { id, email }
 
   // toast helper
   const showToast = (msg, kind = 'info') => {
@@ -118,10 +81,9 @@ export default function AssetsBoard() {
         setAssets(Array.isArray(res) ? res : []);
       } catch (err) {
         console.error("Assets: failed to fetch assets", err);
-        // keep using mock assets if backend fails to avoid breaking UI
+        // Keep empty array if backend fails - only show database data
         if (mounted) {
-          const userMockAssets = mockAssets.filter(asset => asset.email === user?.email);
-          setAssets(userMockAssets);
+          setAssets([]);
         }
       }
     })();
@@ -162,13 +124,13 @@ export default function AssetsBoard() {
     } catch (err) {
       console.error('Assets: failed to add asset', err);
       showToast(`Failed to add asset: ${err.message}`, 'error');
-      // Show a user-friendly message and fall back to mock data so UI remains usable
+      // Refresh assets list from database
       try {
         const fresh = await listAssets(user?.email);
         setAssets(Array.isArray(fresh) ? fresh : []);
       } catch (e) {
-        const userMockAssets = mockAssets.filter(asset => asset.email === user?.email);
-        setAssets(userMockAssets);
+        console.error("Failed to refresh assets after error:", e);
+        setAssets([]);
       }
     }
 
@@ -243,7 +205,16 @@ export default function AssetsBoard() {
 
   const cancelEdit = () => setEditingId(null);
 
-  const handleDelete = async (id) => {
+  const handleDeleteClick = (asset) => {
+    setDeleteConfirm({ id: asset.id, email: asset.email });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirm) return;
+    
+    const id = deleteConfirm.id;
+    setDeleteConfirm(null);
+    
     // optimistic UI update
     const remaining = assets.filter((a) => a.id !== id);
     setAssets(remaining);
@@ -252,16 +223,20 @@ export default function AssetsBoard() {
       showToast('Asset deleted', 'success');
     } catch (err) {
       console.error('Failed to delete asset', err);
-      // revert to fresh list from backend or mock, filtered for current user
+      // revert to fresh list from backend
       try {
         const fresh = await listAssets(user?.email);
         setAssets(Array.isArray(fresh) ? fresh : []);
       } catch (e) {
-        const userMockAssets = mockAssets.filter(asset => asset.email === user?.email);
-        setAssets(userMockAssets);
+        console.error("Failed to refresh assets after delete error:", e);
+        setAssets([]);
       }
       showToast('Failed to delete asset', 'error');
     }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirm(null);
   };
 
   return (
@@ -634,10 +609,10 @@ export default function AssetsBoard() {
                     >
                       Edit
                     </button>
-                    {/* <button
+                    <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm('Delete this asset?')) handleDelete(a.id);
+                        handleDeleteClick(a);
                       }}
                       style={{
                         background: "rgba(255,255,255,0.9)",
@@ -650,7 +625,7 @@ export default function AssetsBoard() {
                       }}
                     >
                       Delete
-                    </button> */}
+                    </button>
                   </div>
                 )}
               </div>
@@ -668,6 +643,79 @@ export default function AssetsBoard() {
           </div>
         ))}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 10000,
+          }}
+          onClick={handleDeleteCancel}
+        >
+          <div
+            style={{
+              background: '#fff',
+              padding: '2rem',
+              borderRadius: '12px',
+              maxWidth: '400px',
+              width: '90%',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', color: '#1f2937' }}>
+              Confirm Delete
+            </h3>
+            <p style={{ margin: '0 0 1.5rem 0', color: '#6b7280', lineHeight: '1.5' }}>
+              Are you sure you want to delete this item? This action cannot be undone.
+            </p>
+            {deleteConfirm.email && (
+              <p style={{ margin: '0 0 1.5rem 0', color: '#374151', fontWeight: '500', fontSize: '0.9rem' }}>
+                Asset: {deleteConfirm.email}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                onClick={handleDeleteCancel}
+                style={{
+                  padding: '0.5rem 1.5rem',
+                  background: '#e5e7eb',
+                  color: '#374151',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                style={{
+                  padding: '0.5rem 1.5rem',
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 
 
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext'; // Updated import for AuthProvider and useAuth
 import { ProjectProvider, useProjects } from './context/ProjectContext'; // Assuming ProjectContext exists
 
@@ -25,6 +25,7 @@ import { FiMenu } from 'react-icons/fi';
 // PrivateRoute: Only allows authenticated users
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -34,7 +35,13 @@ function PrivateRoute({ children }) {
     );
   }
 
-  return user ? children : <Navigate to="/login" replace />;
+  // If not authenticated, redirect to login but preserve the intended destination
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  
+  // User is authenticated, render the children (preserving the current route)
+  return children;
 }
 
 export default function App() {
@@ -64,9 +71,31 @@ export default function App() {
 // Handles initial redirect from root to login
 function InitialRootRedirect() {
   const navigate = useNavigate();
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  
   useEffect(() => {
-    navigate("/login", { replace: true });
-  }, [navigate]);
+    if (!loading) {
+      if (!user) {
+        navigate("/login", { replace: true, state: { from: location } });
+      } else {
+        // Only redirect to /for-you if we're on the root path
+        // Otherwise, let the user stay on their current route
+        if (location.pathname === '/') {
+          navigate("/for-you", { replace: true });
+        }
+      }
+    }
+  }, [user, loading, navigate, location]);
+  
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontSize: '24px', color: '#666' }}>
+        Loading...
+      </div>
+    );
+  }
+  
   return null;
 }
 
@@ -75,13 +104,15 @@ function InitialRootRedirect() {
 function AuthPageWrapper({ component: Component }) {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     if (!loading && user) {
-      // If user is logged in, redirect to the main dashboard
-      navigate("/for-you", { replace: true });
+      // If user is logged in, redirect to the page they were trying to access, or /for-you as default
+      const from = location.state?.from?.pathname || '/for-you';
+      navigate(from, { replace: true });
     }
-  }, [user, loading, navigate]);
+  }, [user, loading, navigate, location]);
 
   if (loading) {
     return (

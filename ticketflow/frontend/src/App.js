@@ -18,8 +18,25 @@ import { FiMenu, FiLogOut, FiUser, FiX, FiHome, FiList, FiGrid, FiBriefcase, FiC
 
 // PrivateRoute: Only allows authenticated users
 function PrivateRoute({ children }) {
-  const { user } = useAuth();
-  return user ? children : <Navigate to="/login" replace />;
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  
+  // Wait for auth to finish loading
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontSize: '24px', color: '#666' }}>
+        Loading...
+      </div>
+    );
+  }
+  
+  // If not authenticated, redirect to login but preserve the intended destination
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  
+  // User is authenticated, render the children (preserving the current route)
+  return children;
 }
 
 export default function App() {
@@ -44,23 +61,47 @@ export default function App() {
 }
 
 function AuthLanding() {
-  const { user } = useAuth();
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  } else {
-    return <Navigate to="/for-you" replace />;
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  
+  useEffect(() => {
+    if (!loading) {
+      if (!user) {
+        navigate('/login', { replace: true, state: { from: location } });
+      } else {
+        // Only redirect to /for-you if we're on the root path
+        // Otherwise, let the user stay on their current route
+        if (location.pathname === '/') {
+          navigate('/for-you', { replace: true });
+        }
+      }
+    }
+  }, [user, loading, navigate, location]);
+  
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontSize: '24px', color: '#666' }}>
+        Loading...
+      </div>
+    );
   }
+  
+  return null;
 }
 
 function LoginRedirectAfterAuth() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     if (user) {
-      navigate('/for-you', { replace: true });
+      // Redirect to the page the user was trying to access, or /for-you as default
+      const from = location.state?.from?.pathname || '/for-you';
+      navigate(from, { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, navigate, location]);
 
   return <Login />;
 }

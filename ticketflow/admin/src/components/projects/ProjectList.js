@@ -239,13 +239,25 @@ export default function ProjectList() {
   // Fetch registered users for email validation and team members dropdown
   const loadRegisteredUsers = async () => {
     try {
-      const response = await fetch('http://localhost:8000/users-management');
+      // Fetch all registered users and admins from the combined endpoint
+      const response = await fetch('http://localhost:8000/all-users');
       if (response.ok) {
         const users = await response.json();
         const emails = users.map(user => user.email.toLowerCase());
         setRegisteredEmails(emails);
-        setAvailableUsers(users); // Store full user objects for dropdown
-        console.log('Loaded registered users:', users.length);
+        
+        // Format users for dropdown display (name and email)
+        const formattedUsers = users.map(user => ({
+          email: user.email,
+          name: user.name || user.full_name || user.email.split("@")[0],
+          full_name: user.full_name || user.name || "",
+          type: user.type || "user"
+        }));
+        
+        setAvailableUsers(formattedUsers); // Store full user objects for dropdown
+        console.log('Loaded registered users and admins:', formattedUsers.length);
+      } else {
+        console.error('Failed to fetch users:', response.status);
       }
     } catch (error) {
       console.error('Error loading registered users:', error);
@@ -541,7 +553,7 @@ export default function ProjectList() {
                         }}
                       />
                       <span style={{ flex: 1, color: '#172B4D' }}>
-                        {user.first_name} {user.last_name}
+                        {user.name || user.full_name || user.email.split("@")[0]}
                       </span>
                       <span style={{ fontSize: '11px', color: '#6B778C', marginLeft: '8px', flexShrink: 0 }}>
                         {user.email}
@@ -739,7 +751,7 @@ export default function ProjectList() {
                                   }}
                                 />
                                 <span style={{ flex: 1, color: '#172B4D' }}>
-                                  {user.first_name} {user.last_name}
+                                  {user.name || user.full_name || user.email.split("@")[0]}
                                 </span>
                                 <span style={{ fontSize: '10px', color: '#6B778C', marginLeft: '4px', flexShrink: 0 }}>
                                   {user.email}

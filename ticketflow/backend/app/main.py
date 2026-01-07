@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator
 import logging
 from . import timeline
 from .database import init_db
@@ -70,7 +70,7 @@ async def shutdown():
         logger.error(f"Error closing database connections: {e}")
 
 # Unified DB session dependency
-async def get_db() -> AsyncSession:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for getting database session with proper transaction handling"""
     async with database.AsyncSessionLocal() as session:
         try:
@@ -289,17 +289,27 @@ async def register_admin(admin_in: schemas.AdminCreate, db: AsyncSession = Depen
         # Check if admin already exists
         existing_admin = await crud.get_admin_by_email(db, admin_in.email)
         if existing_admin:
+            logger.warning(f"Registration attempt with existing email: {admin_in.email}")
             raise HTTPException(status_code=400, detail="Email already registered")
         
         # Create new admin
+        logger.info(f"Creating admin in database...")
         created_admin = await crud.create_admin(db, admin_in)
-        logger.info(f"Admin registered successfully: {created_admin.email}")
+        logger.info(f"✅ Admin registered successfully: {created_admin.email}, ID: {created_admin.id}")
+        
+        # Verify admin was actually saved
+        verify_admin = await crud.get_admin_by_email(db, admin_in.email)
+        if not verify_admin:
+            logger.error(f"❌ Admin was not saved to database after creation!")
+            raise HTTPException(status_code=500, detail="Admin registration failed - data not saved")
+        
+        logger.info(f"✅ Admin verified in database: {verify_admin.id}")
         return created_admin
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error registering admin: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Error registering admin: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 @app.post("/admin/login", response_model=schemas.AdminOut)
 async def login_admin(credentials: schemas.AdminLogin, db: AsyncSession = Depends(get_db)):
@@ -619,6 +629,46 @@ async def delete_epic(epic_id: int, db: AsyncSession = Depends(get_db)):
         logger.error(f"Error deleting epic: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- Combined Users Endpoint (All registered users and admins) ---
+@app.get("/all-users")
+async def get_all_registered_users(db: AsyncSession = Depends(get_db)):
+    """Get all registered users and admins for team member selection"""
+    try:
+        logger.info("Fetching all registered users and admins")
+        
+        # Get users from users table (frontend registrations)
+        users = await crud.list_all_users(db)
+        
+        # Get admins from admin_registrations table (admin registrations)
+        admins = await crud.list_all_admins(db)
+        
+        # Combine and format the results
+        all_users = []
+        
+        # Add regular users
+        for user in users:
+            all_users.append({
+                "email": user.email,
+                "name": user.full_name or user.email.split("@")[0],
+                "full_name": user.full_name or "",
+                "type": "user"
+            })
+        
+        # Add admins
+        for admin in admins:
+            all_users.append({
+                "email": admin.email,
+                "name": admin.full_name or admin.email.split("@")[0],
+                "full_name": admin.full_name or "",
+                "type": "admin"
+            })
+        
+        logger.info(f"Found {len(users)} users and {len(admins)} admins (total: {len(all_users)})")
+        return all_users
+    except Exception as e:
+        logger.error(f"Error fetching all users: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- UsersManagement Routes (User Frontend Profile Data) ---
 @app.get("/users-management", response_model=List[schemas.UsersManagementOut])
 async def read_users_management(db: AsyncSession = Depends(get_db)):
@@ -680,28 +730,50 @@ async def create_users_management(user_in: schemas.UsersManagementCreate, db: As
 @app.put("/users-management/{user_id}", response_model=schemas.UsersManagementOut)
 async def update_users_management(user_id: int, user_in: schemas.UsersManagementUpdate, db: AsyncSession = Depends(get_db)):
     """Update a user in users_management table - Auto-syncs to user_profile"""
-    updated_user = await crud.update_users_management(db, user_id, user_in)
-    if not updated_user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Auto-sync to user_profile table (bidirectional sync)
     try:
-        user_profile = await crud.get_user_profile_by_email(db, updated_user.email)
-        if user_profile:
-            # Update user_profile with the data from users_management
-            profile_update = schemas.UserProfileUpdate(
-                full_name=f"{updated_user.first_name} {updated_user.last_name}".strip(),
-                role=updated_user.role,
-                department=updated_user.department,
-                mobile_number=updated_user.mobile_number,
-                user_status="Active" if updated_user.active else "Inactive"
-            )
-            await crud.update_user_profile(db, user_profile.user_id, profile_update)
-            logger.info(f"Successfully synced update to user_profile table")
-    except Exception as sync_error:
-        logger.warning(f"Failed to sync to user_profile (non-critical): {sync_error}")
-    
-    return updated_user
+        logger.info(f"Updating user {user_id} with data: {user_in.dict(exclude_unset=True)}")
+        
+        # Update the user in users_management table - this is the main operation
+        updated_user = await crud.update_users_management(db, user_id, user_in)
+        if not updated_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        logger.info(f"Successfully updated user {user_id} in users_management table")
+        
+        # Auto-sync to user_profile table (bidirectional sync)
+        # Use a separate session to avoid rollback affecting the main transaction
+        try:
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as sync_db:
+                try:
+                    user_profile = await crud.get_user_profile_by_email(sync_db, updated_user.email)
+                    if user_profile:
+                        # Update user_profile with the data from users_management
+                        profile_update = schemas.UserProfileUpdate(
+                            full_name=f"{updated_user.first_name} {updated_user.last_name}".strip(),
+                            role=updated_user.role,
+                            department=updated_user.department,
+                            mobile_number=updated_user.mobile_number,
+                            user_status="Active" if updated_user.active else "Inactive"
+                        )
+                        await crud.update_user_profile(sync_db, user_profile.user_id, profile_update)
+                        await sync_db.commit()
+                        logger.info(f"Successfully synced update to user_profile table")
+                    else:
+                        logger.info(f"No user_profile found for {updated_user.email}, skipping sync")
+                except Exception as sync_inner_error:
+                    await sync_db.rollback()
+                    logger.warning(f"Failed to sync to user_profile (non-critical): {sync_inner_error}")
+        except Exception as sync_error:
+            # Outer try-catch for session creation errors
+            logger.warning(f"Failed to sync to user_profile (non-critical): {sync_error}")
+        
+        return updated_user
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update user: {str(e)}")
 
 @app.delete("/users-management/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_users_management(user_id: int, db: AsyncSession = Depends(get_db)):

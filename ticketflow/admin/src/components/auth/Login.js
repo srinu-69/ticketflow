@@ -54,9 +54,19 @@ const [showPassword, setShowPassword] = useState(false);
 const [showResetPassword, setShowResetPassword] = useState(false);
 const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 const [showRegPassword, setShowRegPassword] = useState(false);
+const [isSubmitting, setIsSubmitting] = useState(false);
 
 const { login, loading } = useAuth();
 const navigate = useNavigate();
+
+// Wait for initial auth check to complete before allowing login
+React.useEffect(() => {
+  console.log('Auth loading state:', loading);
+}, [loading]);
+
+// Only disable button during actual login submission, not during initial auth check
+// But we should wait for initial loading to finish
+const isLoginDisabled = isSubmitting;
 
 React.useEffect(() => {
 let interval = null;
@@ -68,21 +78,40 @@ return () => clearInterval(interval);
 
 const handleLogin = async (e) => {
 e.preventDefault();
+e.stopPropagation();
 setError('');
+setIsSubmitting(true);
+console.log('Login button clicked', { email, password: password ? '***' : '' });
+if (!email || !password) {
+setError('Please enter both email and password');
+setIsSubmitting(false);
+return;
+}
 try {
+console.log('Calling login function...');
 // Use the AuthContext login function
-await login(email, password);
-// Navigate to dashboard
-navigate('/for-you');
+const result = await login(email, password);
+console.log('Login successful:', result);
+// Small delay to ensure state updates are complete
+setTimeout(() => {
+navigate('/for-you', { replace: true });
+}, 100);
 } catch (err) {
 console.error('Login error:', err);
 setError(err.message || 'Failed to log in. Please check your credentials.');
+setIsSubmitting(false);
 }
 };
 
 // Registration form submission handler
 const handleRegister = async (e) => {
 e.preventDefault();
+setError('');
+if (!fullName || !email || !password) {
+setError('Please fill in all fields');
+return;
+}
+console.log('Admin registration attempt:', { fullName, email });
 try {
 const response = await fetch('http://localhost:8000/admin/register', {
 method: 'POST',
@@ -96,19 +125,29 @@ password: password,
 }),
 });
 
-const data = await response.json();
+let data;
+try {
+data = await response.json();
+} catch (jsonError) {
+console.error('Failed to parse response:', jsonError);
+throw new Error('Server returned invalid response');
+}
+
+console.log('Registration response:', { status: response.status, data });
 
 if (response.ok) {
+console.log('Admin registration successful!');
 // Use AuthContext login to properly set user state
 await login(email, password);
 // Navigate to dashboard
 navigate('/for-you');
 } else {
-setError(data.detail || 'Registration failed. Please try again.');
+console.error('Registration failed:', data);
+setError(data.detail || `Registration failed (${response.status}). Please try again.`);
 }
 } catch (error) {
 console.error('Registration error:', error);
-setError('An error occurred during registration. Please try again.');
+setError(error.message || 'An error occurred during registration. Please check if the backend is running.');
 }
 };
 
@@ -770,6 +809,15 @@ Back to Login
 );
 }
 
+// Show loading screen while initial auth check is happening
+if (loading && !isSubmitting) {
+  return (
+    <div style={styles.loginContainer}>
+      <div style={{ color: 'white', fontSize: '20px', textAlign: 'center', paddingTop: '50vh' }}>Loading...</div>
+    </div>
+  );
+}
+
 return (
 <>
 <style>{animationStyles}</style>
@@ -778,7 +826,7 @@ return (
 <div style={styles.loginCard}>
 <div style={styles.loginFormSection}>
 <h2 style={styles.heading}>FLOW TRACK</h2>
-<form onSubmit={handleLogin} style={styles.form}>
+<form onSubmit={handleLogin} style={styles.form} noValidate>
 <div style={styles.inputGroup}>
 <div style={styles.inputIcon}>
 <MailIcon />
@@ -831,18 +879,29 @@ onMouseLeave={(e) => e.currentTarget.style.color = '#667eea'}
 </div>
 <button
 type="submit"
-style={styles.button}
+style={{
+...styles.button,
+opacity: isLoginDisabled ? 0.6 : 1,
+cursor: isLoginDisabled ? 'not-allowed' : 'pointer',
+}}
 onMouseOver={(e) => {
+if (!isLoginDisabled) {
 e.target.style.transform = 'translateY(-3px)';
 e.target.style.boxShadow = '0 12px 30px rgba(102, 126, 234, 0.5)';
+}
 }}
 onMouseOut={(e) => {
+if (!isLoginDisabled) {
 e.target.style.transform = 'translateY(0)';
 e.target.style.boxShadow = '0 8px 25px rgba(102, 126, 234, 0.4)';
+}
 }}
-disabled={loading}
+disabled={isLoginDisabled}
+onClick={(e) => {
+console.log('Button onClick triggered', { isLoginDisabled, isSubmitting, loading });
+}}
 >
-{loading ? 'Signing In...' : 'Sign In'}
+{isSubmitting || loading ? 'Signing In...' : 'Sign In'}
 <div style={styles.buttonHover}></div>
 </button>
 {error && <p style={styles.errorMessage}>{error}</p>}

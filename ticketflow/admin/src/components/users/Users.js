@@ -1028,7 +1028,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { listUsers, addUser, updateUser, deleteUser } from '../../services/userApi';
-import { getUsersFromManagement, updateUserProfile, createUserProfile, getUserProfileByEmail, deleteUserFromManagement } from '../../services/userProfileApi';
+import { getUsersFromManagement, updateUserProfile, createUserProfile, getUserProfileByEmail, deleteUserFromManagement, updateUserFromManagement } from '../../services/userProfileApi';
 import { v4 as uuidv4 } from 'uuid';
 import {
   FiUserPlus, FiEdit2, FiTrash2, FiCheck, FiX, FiSearch,
@@ -1216,36 +1216,26 @@ export default function Users() {
       return;
     }
     try {
-      // Prepare user profile data for user_profile table
-      const profileData = {
-        full_name: `${editForm.firstName.trim()} ${editForm.lastName || ''}`.trim(),
-        email: editForm.email,
-        mobile_number: editForm.mobileNumber || null,
-        role: editForm.role,
-        department: editForm.department,
-        date_of_birth: null, // Can be added if needed
-        user_status: editForm.active ? "Active" : "Inactive"
+      // Prepare user data for users_management table
+      // This is the primary table and will auto-sync to user_profile
+      const userData = {
+        first_name: editForm.firstName.trim(),
+        last_name: (editForm.lastName || '').trim(),
+        email: editForm.email.trim(),
+        mobile_number: editForm.mobileNumber ? editForm.mobileNumber.trim() : null,
+        role: editForm.role ? editForm.role.trim() : null,
+        department: editForm.department ? editForm.department.trim() : null,
+        active: editForm.active !== undefined ? editForm.active : true,
+        // Don't include tickets_issued and tickets_resolved - they're read-only
       };
       
-      console.log('Admin editing user profile:', profileData);
+      console.log('Admin updating user in users_management:', userData);
       
-      // Check if user profile already exists in user_profile table
-      const existingProfile = await getUserProfileByEmail(editForm.email);
+      // Update directly in users_management table (which auto-syncs to user_profile)
+      await updateUserFromManagement(parseInt(id), userData);
+      console.log('Successfully updated user in users_management table');
       
-      if (existingProfile) {
-        // Profile exists - UPDATE it
-        console.log('Updating existing user profile, user_id:', existingProfile.user_id);
-        await updateUserProfile(existingProfile.user_id, profileData);
-        console.log('Successfully updated user profile in user_profile table');
-      } else {
-        // Profile doesn't exist - CREATE it
-        console.log('Creating new user profile in user_profile table');
-        await createUserProfile(profileData);
-        console.log('Successfully created user profile in user_profile table');
-      }
-      
-      // The backend automatically syncs changes back to users_management table
-      // Now refresh the users list from users_management table
+      // Refresh the users list from users_management table
       const realUsers = await getUsersFromManagement();
       const transformedUsers = realUsers.map(user => ({
         id: user.id.toString(),
@@ -1255,6 +1245,8 @@ export default function Users() {
         email: user.email,
         role: user.role,
         department: user.department,
+        ticketsIssued: user.tickets_issued || 0,
+        ticketsResolved: user.tickets_resolved || 0,
         active: user.active,
         language: user.language || 'English',
         mobileNumber: user.mobile_number,
@@ -1323,6 +1315,9 @@ export default function Users() {
   });
 
   const getRoleColor = (roleOrDepartment) => {
+    if (!roleOrDepartment) return 'role-developer'; // Default fallback
+    
+    const normalizedRole = roleOrDepartment.toLowerCase().trim();
     const colors = {
       'admin': 'role-admin',
       'manager': 'role-manager',
@@ -1332,19 +1327,25 @@ export default function Users() {
       'sales': 'role-sales',
       'hr': 'role-hr',
       'marketing': 'role-marketing',
+      'senior developer': 'role-developer',
       'senior associate developer': 'role-developer',
       'associate developer': 'role-developer',
       'frontend': 'role-developer',
+      'front end': 'role-developer',
       'backend': 'role-developer',
+      'back end': 'role-developer',
       'middleware': 'role-developer',
+      'middle ware': 'role-developer',
       'aiml': 'role-developer',
       'devops': 'role-developer',
       'testing': 'role-developer',
       'flowtrack': 'role-developer',
       'network': 'role-developer',
       'administrator': 'role-admin',
+      'administration': 'role-admin',
+      'ceo': 'role-manager',
     };
-    return colors[roleOrDepartment.toLowerCase()] || '';
+    return colors[normalizedRole] || 'role-developer'; // Default to developer style for new roles
   };
 
   // ---- Modal handlers ----
@@ -1574,8 +1575,10 @@ export default function Users() {
             </div>
             <div>
               {roles.map(r => (
-                <div key={r} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-                  <span>{r}</span>
+                <div key={r} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span className={`role-badge ${getRoleColor(r)}`} style={{ marginRight: 'auto' }}>
+                    {r}
+                  </span>
                   <FiMinus style={{ cursor: 'pointer', color: '#e53e3e' }}
                     title="Delete role"
                     onClick={() => setRoleToDelete(r)}

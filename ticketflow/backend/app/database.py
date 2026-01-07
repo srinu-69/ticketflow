@@ -60,6 +60,26 @@ async def test_connection() -> bool:
         return False
 
 
+async def remove_role_constraints() -> None:
+    """Remove CHECK constraints on role and department columns to allow custom values"""
+    try:
+        async with engine.begin() as conn:
+            # Remove role constraint
+            try:
+                await conn.execute(text("ALTER TABLE user_profile DROP CONSTRAINT IF EXISTS user_profile_role_check"))
+                logger.info("✅ Removed user_profile_role_check constraint")
+            except Exception as e:
+                logger.warning(f"Could not remove role constraint (may not exist): {e}")
+            
+            # Remove department constraint
+            try:
+                await conn.execute(text("ALTER TABLE user_profile DROP CONSTRAINT IF EXISTS user_profile_department_check"))
+                logger.info("✅ Removed user_profile_department_check constraint")
+            except Exception as e:
+                logger.warning(f"Could not remove department constraint (may not exist): {e}")
+    except Exception as e:
+        logger.warning(f"⚠️  Could not remove constraints: {e}. This is non-critical.")
+
 # helper to create tables (call during dev or startup)
 async def init_db() -> None:
     """Initialize database - create all tables"""
@@ -76,6 +96,10 @@ async def init_db() -> None:
             await conn.run_sync(Base.metadata.create_all)
         
         logger.info("✅ Database tables created successfully")
+        
+        # Remove CHECK constraints to allow custom roles/departments
+        await remove_role_constraints()
+        
     except Exception as e:
         logger.error(f"❌ Error initializing database: {e}")
         raise

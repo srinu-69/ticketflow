@@ -65,7 +65,16 @@ export function AuthProvider({ children }) {
         }),
       });
 
-      const data = await response.json();
+      console.log('AuthContext: Response status:', response.status);
+
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        const text = await response.text();
+        console.error("AuthContext: Failed to parse JSON response:", text);
+        throw new Error('Server returned invalid response. Please check if backend is running.');
+      }
 
       if (response.ok) {
         // Store admin info in localStorage
@@ -77,16 +86,23 @@ export function AuthProvider({ children }) {
         console.log("AuthContext: Login successful! User set and stored.", data);
         return data;
       } else {
-        console.error("AuthContext: Login failed:", data.detail);
+        console.error("AuthContext: Login failed:", data?.detail || 'Unknown error');
         setUser(null);
         localStorage.removeItem("user");
         localStorage.removeItem("adminUser");
         localStorage.removeItem("isAuthenticated");
-        throw new Error(data.detail || 'Invalid email or password');
+        throw new Error(data?.detail || `Login failed with status ${response.status}`);
       }
 
     } catch (error) {
       console.error("AuthContext: Login failed:", error.message);
+      
+      // Handle network errors
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        setLoading(false);
+        throw new Error('Cannot connect to server. Please ensure the backend is running on http://localhost:8000');
+      }
+      
       setUser(null);
       localStorage.removeItem("user");
       localStorage.removeItem("adminUser");

@@ -3,57 +3,8 @@ import { useParams } from 'react-router-dom';
 import { FiUpload } from 'react-icons/fi';
 import { useAuth } from '../../context/AuthContext';
 
-const mockIssues = [
-  {
-    id: 'i1',
-    epic: 'p1',
-    epicName: 'Frontend',
-    status: 'todo',
-    type: 'Task',
-    title: 'Setup repo',
-    assignee: 'John Doe',
-    storyPoints: 3,
-    labels: [],
-    dueDate: '2025-09-30',
-    reporter: 'admin',
-    priority: 'High',
-    startDate: '2025-09-15',
-    description: 'Setup the initial repository structure and configuration',
-    subtasks: [
-      { id: 'st1', title: 'Create GitHub repository', completed: true },
-      { id: 'st2', title: 'Setup CI/CD pipeline', completed: false },
-      { id: 'st3', title: 'Configure linting and formatting', completed: false }
-    ],
-    comments: 'Initial setup required for the project'
-  },
-  {
-    id: 'i3',
-    epic: 'p2',
-    epicName: 'Middleware',
-    status: 'todo',
-    type: 'Subtask',
-    title: 'API integration',
-    assignee: 'Jane Smith',
-    storyPoints: 2,
-    labels: [],
-    dueDate: '',
-    reporter: 'lead-dev',
-    priority: 'Low',
-    startDate: '2025-09-18',
-    description: 'Integrate with external API services',
-    subtasks: [
-      { id: 'st4', title: 'Design API endpoints', completed: true },
-      { id: 'st5', title: 'Implement authentication', completed: false }
-    ],
-    comments: ''
-  }
-];
-
 const ALLOWED_STATUSES = ['backlog', 'todo', 'inprogress', 'blocked', 'code_review', 'done'];
 const defaultStatuses = [...ALLOWED_STATUSES];
-const mockEpics = [{ id: 'p1', name: 'Frontend' }, { id: 'p2', name: 'Middleware' }];
-
-const simulateApiDelay = () => new Promise(resolve => setTimeout(resolve, 200));
 
 const normalizeStatus = (status) => {
   if (!status) {
@@ -230,11 +181,7 @@ const listIssues = async (projectId) => {
   } catch (error) {
     console.error('Error fetching tickets:', error);
   }
-  // Only return mock issues if no project is specified (fallback for general use)
-  if (!projectId) {
-    return mockIssues;
-  }
-  return []; // Return empty array for specific projects to avoid showing wrong data
+  return []; // Return empty array if API fails - only show database data
 };
 
 const listProjects = async (userEmail = null) => {
@@ -305,11 +252,9 @@ const createEpicAPI = async (epicName, projectId, userName) => {
     }
   } catch (error) {
     console.error('Error creating epic:', error);
+    throw error; // Throw error instead of using mock data
   }
-  // Fallback to mock creation
-  const newEpic = { id: 'p' + (mockEpics.length + 1), name: epicName };
-  mockEpics.push(newEpic);
-  return newEpic;
+  return null;
 };
 
 const deleteEpicAPI = async (epicId) => {
@@ -324,11 +269,9 @@ const deleteEpicAPI = async (epicId) => {
     }
   } catch (error) {
     console.error('Error deleting epic:', error);
+    throw error; // Throw error instead of using mock data
   }
-  // Fallback to mock deletion
-  const epicIndex = mockEpics.findIndex(epic => epic.id === epicId);
-  if (epicIndex > -1) mockEpics.splice(epicIndex, 1);
-  return true;
+  return false;
 };
 
 const moveIssue = async (issueId, status) => {
@@ -1190,8 +1133,7 @@ export default function KanbanBoard() {
           </p>
         )}
         <div className="epic-buttons-container">
-          <button className="create-epic-btn" onClick={() => { setShowCreateEpic(true); setShowDeleteEpic(false); }}>+ Create Epic</button>
-          <button className="delete-epic-btn" onClick={() => { setShowDeleteEpic(true); setShowCreateEpic(false); }}>🗑 Delete Epic</button>
+          <button className="create-epic-btn" onClick={() => { setShowCreateEpic(true); }}>+ Create Epic</button>
         </div>
 
         {/* Create Epic Modal */}
@@ -1229,27 +1171,6 @@ export default function KanbanBoard() {
           </div>
         )}
 
-        {/* Delete Epic Modal */}
-        {showDeleteEpic && (
-          <div className="epic-modal-overlay" onClick={() => setShowDeleteEpic(false)}>
-            <div className="epic-modal" onClick={e => e.stopPropagation()}>
-              <div className="epic-modal-content">
-                <h3>Delete Epic</h3>
-                <p className="delete-warning">Select an epic to delete. This will also delete all issues in the epic.</p>
-                <select value={epicToDelete} onChange={(e) => setEpicToDelete(e.target.value)} className="epic-modal-select">
-                  <option value="">Select an epic...</option>
-                  {epics.map(epic => (
-                    <option key={epic.id} value={epic.id}>{epic.name} ({swimlanes.find(s => s.id === epic.id)?.issues.length || 0} issues)</option>
-                  ))}
-                </select>
-                <div className="epic-modal-actions">
-                  <button className="btn-cancel" onClick={() => { setShowDeleteEpic(false); setEpicToDelete(''); }}>Cancel</button>
-                  <button className="btn-delete" onClick={handleDeleteEpic} disabled={!epicToDelete}>Delete Epic</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Swimlanes and columns */}
@@ -1624,34 +1545,6 @@ export default function KanbanBoard() {
             </div>
 
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={handleReset}
-                style={{
-                  padding: '10px 20px',
-                  background: '#6b7280',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '14px'
-                }}
-              >
-                Reset
-              </button>
-              <button
-                onClick={handleDeleteIssue}
-                style={{
-                  padding: '10px 20px',
-                  background: '#ef4444',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '14px'
-                }}
-              >
-                Delete
-              </button>
               <button
                 onClick={handleSave}
                 style={{

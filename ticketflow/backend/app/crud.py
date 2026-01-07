@@ -130,21 +130,18 @@
 #     await session.commit()
 #     return True
 from sqlalchemy import select, update, delete
-from sqlalchemy.ext.asyncio import AsyncSession 
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from datetime import datetime, timedelta
 import json
+import logging
 from . import models, schemas 
 from .models import UserProfile 
 from .schemas import UserProfileCreate, UserProfileUpdate 
 import bcrypt 
-from typing import List, Optional
-
-from sqlalchemy import select, update, delete
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from . import models, schemas
+logger = logging.getLogger(__name__)
 
 
 
@@ -879,23 +876,69 @@ async def create_user(session: AsyncSession, user_in: schemas.UserCreate) -> mod
         salt = bcrypt.gensalt()
         hashed_password = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
         
-        user = models.User(
-            full_name=user_in.full_name or "",
-            email=user_in.email,
-            hashed_password=hashed_password,
-        )
-        session.add(user)
+        # Use raw SQL insert to avoid column mismatch issues
+        from sqlalchemy import text
+        insert_query = text("""
+            INSERT INTO users (full_name, email, hashed_password)
+            VALUES (:full_name, :email, :hashed_password)
+            RETURNING id, email, full_name, hashed_password
+        """)
+        result = await session.execute(insert_query, {
+            "full_name": user_in.full_name or "",
+            "email": user_in.email,
+            "hashed_password": hashed_password
+        })
         await session.commit()
-        await session.refresh(user)
-        return user
+        
+        row = result.first()
+        if row:
+            user = models.User()
+            user.id = row.id
+            user.email = row.email
+            user.full_name = row.full_name or ""
+            user.hashed_password = row.hashed_password
+            logger.info(f"✅ User created successfully with ID: {user.id}, Email: {user.email}")
+            return user
+        else:
+            raise Exception("User was not created - no row returned")
     except Exception as e:
         await session.rollback()
+        logger.error(f"❌ Error creating user: {str(e)}", exc_info=True)
         raise
 
 async def get_user_by_email(session: AsyncSession, email: str) -> Optional[models.User]:
-    q = select(models.User).where(models.User.email == email)
-    res = await session.execute(q)
-    return res.scalars().first()
+    """Get user by email - uses raw SQL to avoid column mismatch issues"""
+    try:
+        from sqlalchemy import text
+        query = text("SELECT id, email, full_name, hashed_password FROM users WHERE email = :email")
+        result = await session.execute(query, {"email": email})
+        row = result.first()
+        if row:
+            user = models.User()
+            user.id = row.id
+            user.email = row.email
+            user.full_name = row.full_name or ""
+            user.hashed_password = row.hashed_password
+            return user
+        return None
+    except Exception as e:
+        logger.error(f"Error getting user by email: {e}", exc_info=True)
+        # Fallback to ORM query (might fail if columns don't match)
+        try:
+            q = select(models.User.id, models.User.email, models.User.full_name, models.User.hashed_password).where(models.User.email == email)
+            res = await session.execute(q)
+            row = res.first()
+            if row:
+                user = models.User()
+                user.id = row.id
+                user.email = row.email
+                user.full_name = row.full_name or ""
+                user.hashed_password = row.hashed_password
+                return user
+            return None
+        except Exception as e2:
+            logger.error(f"Fallback query also failed: {e2}")
+            return None
 
 
 
@@ -931,28 +974,78 @@ async def delete_user(db: AsyncSession, user_id: int):
 # Admin Registration CRUD Functions
 async def create_admin(session: AsyncSession, admin_in: schemas.AdminCreate) -> models.AdminRegistration:
     """Create a new admin registration"""
-    # Hash password with bcrypt
-    password_bytes = admin_in.password.encode('utf-8')
-    if len(password_bytes) > 72:
-        password_bytes = password_bytes[:72]
-    salt = bcrypt.gensalt()
-    hashed_password = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
-    
-    admin = models.AdminRegistration(
-        full_name=admin_in.full_name,
-        email=admin_in.email,
-        hashed_password=hashed_password,
-    )
-    session.add(admin)
-    await session.commit()
-    await session.refresh(admin)
-    return admin
+    try:
+        # Hash password with bcrypt
+        password_bytes = admin_in.password.encode('utf-8')
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+        salt = bcrypt.gensalt()
+        hashed_password = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
+        
+        admin = models.AdminRegistration(
+            full_name=admin_in.full_name,
+            email=admin_in.email,
+            hashed_password=hashed_password,
+        )
+        session.add(admin)
+        await session.flush()  # Flush to get the ID without committing
+        await session.commit()  # Commit the transaction
+        await session.refresh(admin)  # Refresh to get all fields
+        logger.info(f"✅ Admin created successfully with ID: {admin.id}, Email: {admin.email}")
+        return admin
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"❌ Error creating admin: {str(e)}", exc_info=True)
+        raise
 
 async def get_admin_by_email(session: AsyncSession, email: str) -> Optional[models.AdminRegistration]:
     """Get admin by email"""
     q = select(models.AdminRegistration).where(models.AdminRegistration.email == email)
     res = await session.execute(q)
     return res.scalars().first()
+
+async def list_all_admins(session: AsyncSession) -> List[models.AdminRegistration]:
+    """List all admins from admin_registrations table"""
+    result = await session.execute(select(models.AdminRegistration))
+    return list(result.scalars().all())
+
+async def list_all_users(session: AsyncSession) -> List[models.User]:
+    """List all users from users table"""
+    try:
+        # Use text query to select only columns that exist
+        from sqlalchemy import text
+        query = text("SELECT id, email, full_name, hashed_password FROM users")
+        result = await session.execute(query)
+        rows = result.fetchall()
+        
+        # Convert to User objects
+        users = []
+        for row in rows:
+            user = models.User()
+            user.id = row.id
+            user.email = row.email
+            user.full_name = row.full_name or ""
+            user.hashed_password = row.hashed_password
+            users.append(user)
+        return users
+    except Exception as e:
+        logger.error(f"Error listing users: {e}", exc_info=True)
+        # Fallback: try ORM select (might fail if columns don't match)
+        try:
+            result = await session.execute(select(models.User.id, models.User.email, models.User.full_name))
+            rows = result.all()
+            users = []
+            for row in rows:
+                user = models.User()
+                user.id = row.id
+                user.email = row.email
+                user.full_name = getattr(row, 'full_name', '') or ""
+                user.hashed_password = ""
+                users.append(user)
+            return users
+        except Exception as e2:
+            logger.error(f"Fallback query also failed: {e2}")
+            return []
 
 # Ticket CRUD Functions
 async def _update_tickets_issued_counter(session: AsyncSession, email: str, increment: bool = True):
@@ -1406,10 +1499,17 @@ async def list_users_management(session: AsyncSession) -> List[models.UsersManag
 
 async def update_users_management(session: AsyncSession, user_id: int, user_in: schemas.UsersManagementUpdate) -> Optional[models.UsersManagement]:
     """Update a user in users_management table"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     user = await get_users_management_by_id(session, user_id)
     if not user:
+        logger.warning(f"User {user_id} not found in users_management table")
         return None
     
+    logger.info(f"Updating user {user_id}: before update - role={user.role}, department={user.department}, active={user.active}")
+    
+    # Update fields only if they are provided (not None)
     if user_in.first_name is not None:
         user.first_name = user_in.first_name
     if user_in.last_name is not None:
@@ -1418,14 +1518,17 @@ async def update_users_management(session: AsyncSession, user_id: int, user_in: 
         user.email = user_in.email
     if user_in.role is not None:
         user.role = user_in.role
+        logger.info(f"Setting role to: {user_in.role}")
     if user_in.department is not None:
         user.department = user_in.department
+        logger.info(f"Setting department to: {user_in.department}")
     if user_in.tickets_issued is not None:
         user.tickets_issued = user_in.tickets_issued
     if user_in.tickets_resolved is not None:
         user.tickets_resolved = user_in.tickets_resolved
     if user_in.active is not None:
         user.active = user_in.active
+        logger.info(f"Setting active to: {user_in.active}")
     if user_in.language is not None:
         user.language = user_in.language
     if user_in.mobile_number is not None:
@@ -1439,9 +1542,16 @@ async def update_users_management(session: AsyncSession, user_id: int, user_in: 
     if user_in.profile_file_size is not None:
         user.profile_file_size = user_in.profile_file_size
     
-    await session.commit()
-    await session.refresh(user)
-    return user
+    try:
+        await session.flush()  # Flush to validate before commit
+        await session.commit()
+        await session.refresh(user)
+        logger.info(f"Successfully updated user {user_id}: after update - role={user.role}, department={user.department}, active={user.active}")
+        return user
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error committing update for user {user_id}: {e}", exc_info=True)
+        raise
 
 async def delete_users_management(session: AsyncSession, user_id: int) -> bool:
     """Delete a user from users_management table"""

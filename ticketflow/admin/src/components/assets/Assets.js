@@ -99,6 +99,7 @@ export default function AssetsBoard() {
   const [hoveredId, setHoveredId] = useState(null);
   const [quickAdd, setQuickAdd] = useState({});
   const [draggedAsset, setDraggedAsset] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { id, email }
 
   const refreshAssets = async () => {
     try {
@@ -223,7 +224,17 @@ export default function AssetsBoard() {
   };
 
   const cancelEdit = () => setEditingId(null);
-  const deleteAsset = async (id) => {
+  
+  const handleDeleteClick = (asset) => {
+    setDeleteConfirm({ id: asset.id, email: asset.email });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirm) return;
+    
+    const id = deleteConfirm.id;
+    setDeleteConfirm(null);
+    
     try {
       await deleteAdminAsset(id);
       await refreshAssets();
@@ -232,6 +243,10 @@ export default function AssetsBoard() {
       alert('Failed to delete asset. Please try again.');
       await refreshAssets();
     }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirm(null);
   };
 
   return (
@@ -534,9 +549,9 @@ export default function AssetsBoard() {
                       Edit
                     </button>
                     <button
-                      onClick={async (e) => {
+                      onClick={(e) => {
                         e.stopPropagation();
-                        await deleteAsset(a.id);
+                        handleDeleteClick(a);
                       }}
                       style={{
                         background: "rgba(255,0,0,0.85)",
@@ -557,6 +572,79 @@ export default function AssetsBoard() {
           </div>
         ))}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 10000,
+          }}
+          onClick={handleDeleteCancel}
+        >
+          <div
+            style={{
+              background: '#fff',
+              padding: '2rem',
+              borderRadius: '12px',
+              maxWidth: '400px',
+              width: '90%',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', color: '#1f2937' }}>
+              Confirm Delete
+            </h3>
+            <p style={{ margin: '0 0 1.5rem 0', color: '#6b7280', lineHeight: '1.5' }}>
+              Are you sure you want to delete this item? This action cannot be undone.
+            </p>
+            {deleteConfirm.email && (
+              <p style={{ margin: '0 0 1.5rem 0', color: '#374151', fontWeight: '500', fontSize: '0.9rem' }}>
+                Asset: {deleteConfirm.email}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                onClick={handleDeleteCancel}
+                style={{
+                  padding: '0.5rem 1.5rem',
+                  background: '#e5e7eb',
+                  color: '#374151',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                style={{
+                  padding: '0.5rem 1.5rem',
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
